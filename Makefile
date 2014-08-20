@@ -62,6 +62,6 @@ clean:
 
 style:
 	@echo Styling.
-	@astyle -A2 -T -p -U -xe -m1 -k3 -W3 -j -n -S -Y -xC120  $(SRCS) $(wildcard $(SRC_PATH)/*.h)
+	@astyle -A2 -T -p -U -xe -m1 -k3 -W3 -j -O -n -S -Y -xC120  $(SRCS) $(wildcard $(SRC_PATH)/*.h)
 
 -include $(DEPS)

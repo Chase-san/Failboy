@@ -31,11 +31,14 @@ extern uint8_t *oam;
 extern uint8_t *vram;
 
 uint8_t read(uint16_t);
+uint16_t read16(uint16_t);
+
 void write(uint16_t, uint8_t);
+void write16(uint16_t, uint16_t);
 
 /* cpu.c */
 struct registers;
-typedef void (*instruction_f)(struct registers *, uint8_t);
+typedef void (*instruction_f)(struct registers *);
 void exec(struct registers *, uint8_t);
 
 #endif /* _FAILBOY_H_ */

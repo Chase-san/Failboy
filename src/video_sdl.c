@@ -122,13 +122,15 @@ int msdl_event() {
 	return -1; /* notta */
 }
 
+/*
 int main(int argc, char *argv[]) {
 	msdl_create();
 	msdl_render();
 	int event = 0;
 	while((event = msdl_event())) {
-		/* Do stuff here... */
+		// Do stuff here...
 	}
 	msdl_destroy();
 	return 0;
 }
+*/

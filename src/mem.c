@@ -139,6 +139,10 @@ uint8_t read(uint16_t address) {
 	return readmap[address >> 12](address);
 }
 
+uint16_t read16(uint16_t address) {
+	return (read(address)) | (read(address + 1) << 8);
+}
+
 
 /* ************************************************************** */
 /* WRITE */
@@ -217,11 +221,15 @@ void hram_write(uint16_t address, uint8_t value) {
 }
 
 void io_write(uint16_t address, uint8_t value) {
-
 }
 
 void write(uint16_t address, uint8_t value) {
 	/* Use address blocks to avoid if branching. :D */
 	/* With just 16 blocks we can massively reduce the branching here. */
 	writemap[address >> 12](address, value);
+}
+
+void write16(uint16_t address, uint16_t value) {
+	write(address, value);
+	write(address + 1, value >> 8);
 }
