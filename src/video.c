@@ -15,8 +15,9 @@
 #include "failboy.h"
 
 uint8_t vram_read(uint16_t address) {
-	return 0;
+	return vram[address - 0x8000];
 }
 
 void vram_write(uint16_t address, uint8_t value) {
+	vram[address - 0x8000] = value;
 }

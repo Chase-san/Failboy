@@ -25,7 +25,6 @@ void ext0_write(uint16_t, uint8_t); /* 0000-3FFF */
 void ext1_write(uint16_t, uint8_t); /* 4000-7FFF */
 void ext2_write(uint16_t, uint8_t); /* A000-BFFF */
 
-/* ************************************************************** */
 /* video.c */
 uint8_t vram_read(uint16_t); /* 8000-9FFF */
 void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
@@ -36,43 +35,51 @@ void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
 
 static uint8_t *wram;
 static uint8_t *hram;
+uint8_t *oam;
+uint8_t *vram;
 
 void mem_alloc() {
 	/* 8 kB Working Ram */
 	wram = malloc(0x2000);
 	hram = malloc(127);
+	oam = malloc(160);
+	vram = malloc(0x2000);
 }
 
 void mem_free() {
+	free(vram);
+	free(oam);
 	free(hram);
 	free(wram);
 }
 
 /* ************************************************************** */
 /* READ */
-uint8_t wram_read(uint16_t);
-uint8_t wrame_read(uint16_t);
-uint8_t oam_read(uint16_t);
-uint8_t fxxx_read(uint16_t);
-uint8_t cpu_read(uint16_t);
-uint8_t hram_read(uint16_t);
-uint8_t io_read(uint16_t);
+uint8_t wram_read(uint16_t); /* C000-DFFF */
+uint8_t wrame_read(uint16_t); /* E000-FDFF */
+uint8_t oam_read(uint16_t); /* FE00-FE9F */
+uint8_t fxxx_read(uint16_t); /* F000-FFFF */
+uint8_t cpu_read(uint16_t); /* FF00-FFFF */
+uint8_t hram_read(uint16_t); /* FF80-FFFE */
+uint8_t io_read(uint16_t); /* FF00-FF7F */
+
 
 /* memory map */
 static const read_f readmap[16] = {
-	/* 0000h-7fff  external cart stuff */
+	/* 0000-3fff  external cart 0 */
 	ext0_read, ext0_read, ext0_read, ext0_read,
+	/* 4000-7fff  external cart 0 */
 	ext1_read, ext1_read, ext1_read, ext1_read,
-	/* 8000h-9fffh  8kB Video Ram */
+	/* 8000-9fff  8kB Video Ram */
 	vram_read, vram_read,
-	/* a000h-bfffh  external cart stuff */
+	/* a000-bfff  external cart stuff */
 	ext2_read, ext2_read,
-	/* c000h-dfffh  8kB Work Ram */
+	/* c000-dfff  8kB Work Ram */
 	wram_read, wram_read,
-	/* e000h-fdffh  Work Ram Shadow (usually unused) */
-	wrame_read, /* e000h */
-	/* fe00h-ffffh  CPU stuff */
-	fxxx_read /* f000h */
+	/* e000-fdff  Work Ram Echo (usually unused) */
+	wrame_read, /* e000 */
+	/* fe00-ffff  CPU stuff */
+	fxxx_read /* f000 */
 };
 
 /* fxxx range */
@@ -82,7 +89,7 @@ static const read_f fxxx_readmap[16] = {
 	wrame_read, wrame_read, wrame_read, wrame_read,
 	wrame_read, wrame_read, wrame_read, wrame_read,
 	wrame_read, wrame_read,
-	/* e00h-e9f  OAM (140 bytes) */
+	/* e00-e9f  OAM (160 bytes) */
 	/* ea0-eff  NIL */
 	oam_read,
 	/* f00-fff  CPU */
@@ -132,40 +139,40 @@ uint8_t read(uint16_t address) {
 
 /* ************************************************************** */
 /* WRITE */
-
-void wram_write(uint16_t, uint8_t);
-void wrame_write(uint16_t, uint8_t);
-void oam_write(uint16_t, uint8_t);
-void fxxx_write(uint16_t, uint8_t);
-void cpu_write(uint16_t, uint8_t);
-void io_write(uint16_t, uint8_t);
-void hram_write(uint16_t, uint8_t);
+void wram_write(uint16_t, uint8_t); /* C000-DFFF */
+void wrame_write(uint16_t, uint8_t); /* E000-FDFF */
+void oam_write(uint16_t, uint8_t); /* FE00-FE9F */
+void fxxx_write(uint16_t, uint8_t); /* F000-FFFF */
+void cpu_write(uint16_t, uint8_t); /* FF00-FFFF */
+void io_write(uint16_t, uint8_t); /* FF80-FFFE */
+void hram_write(uint16_t, uint8_t); /* FF00-FF7F */
+void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
 
 /* memory map */
 static const write_f writemap[16] = {
-	/* 0000h-7fff  external cart stuff */
+	/* 0000-7fff  external cart stuff */
 	ext0_write, ext0_write, ext0_write, ext0_write,
 	ext1_write, ext1_write, ext1_write, ext1_write,
-	/* 8000h-9fffh  8kB Video Ram */
+	/* 8000-9fff  8kB Video Ram */
 	vram_write, vram_write,
-	/* a000h-bfffh  external cart stuff */
+	/* a000-bfff  external cart stuff */
 	ext2_write, ext2_write,
-	/* c000h-dfffh  8kB Work Ram */
+	/* c000-dfff  8kB Work Ram */
 	wram_write, wram_write,
-	/* e000h-fdffh  Work Ram Shadow (usually unused) */
-	wrame_write, /* e000h */
-	/* fe00h-ffffh  CPU stuff */
-	fxxx_write /* f000h */
+	/* e000-fdff  Work Ram Echo (usually unused) */
+	wrame_write, /* e000 */
+	/* fe00-ffff  CPU stuff */
+	fxxx_write /* f000 */
 };
 
 /* fxxx range */
 static const write_f fxxx_writemap[16] = {
-	/* 000h-dffh  Work Ram Echo */
+	/* 000-dff  Work Ram Echo */
 	wrame_write, wrame_write, wrame_write, wrame_write,
 	wrame_write, wrame_write, wrame_write, wrame_write,
 	wrame_write, wrame_write, wrame_write, wrame_write,
 	wrame_write, wrame_write,
-	/* e00h-e9f  OAM */
+	/* e00-e9f  OAM (160 bytes) */
 	/* ea0-eff  NIL */
 	oam_write,
 	/* f00-fff  CPU */

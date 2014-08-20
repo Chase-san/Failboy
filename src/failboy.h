@@ -27,6 +27,9 @@ typedef void (*write_f)(uint16_t, uint8_t);
 void mem_alloc();
 void mem_free();
 
+extern uint8_t *oam;
+extern uint8_t *vram;
+
 uint8_t read(uint16_t);
 void write(uint16_t, uint8_t);
 
