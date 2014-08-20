@@ -22,6 +22,12 @@
 *.x86_64
 *.hex
 
+# subfolders
+obj/*
+tests/*
+old_src/*
+ref/*
+
 # =========================
 # Operating System Files
 # =========================
@@ -53,11 +59,5 @@ ehthumbs.db
 # Folder config file
 Desktop.ini
 
-# Recycle Bin used on file shares
-$RECYCLE.BIN/
-
-# Windows Installer files
-*.cab
-*.msi
-*.msm
-*.msp
+# Other windows files
+*.bat
