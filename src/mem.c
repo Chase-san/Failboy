@@ -105,6 +105,9 @@ uint8_t wrame_read(uint16_t address) {
 }
 
 uint8_t oam_read(uint16_t address) {
+	if(address < 0xfea0) {
+		return oam[address - 0xfe00];
+	}
 	return 0;
 }
 
@@ -188,6 +191,9 @@ void wrame_write(uint16_t address, uint8_t value) {
 }
 
 void oam_write(uint16_t address, uint8_t value) {
+	if(address < 0xfea0) {
+		oam[address - 0xfe00] = value;
+	}
 }
 
 void fxxx_write(uint16_t address, uint8_t value) {
@@ -211,6 +217,7 @@ void hram_write(uint16_t address, uint8_t value) {
 }
 
 void io_write(uint16_t address, uint8_t value) {
+
 }
 
 void write(uint16_t address, uint8_t value) {
