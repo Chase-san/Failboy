@@ -57,7 +57,7 @@ typedef struct registers {
 } registers_t;
 
 #define nextpc(r) (read(r->PC++))
-#define next16(r) (nextpc(r) | (nextpc(r) << 8))
+#define next16(r) ((nextpc(r)) | (nextpc(r) << 8))
 
 void nop(registers_t *r, uint8_t op) { }
 
