@@ -1,12 +1,12 @@
 /**
  * This file is part of Failboy, a Gameboy Emulator
  * Copyright (c) Robert Maupin <chasesan@gmail.com>
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -82,7 +82,7 @@ static const read_f fxxx_readmap[16] = {
 	wrame_read, wrame_read, wrame_read, wrame_read,
 	wrame_read, wrame_read, wrame_read, wrame_read,
 	wrame_read, wrame_read,
-	/* e00h-e9f  OAM */
+	/* e00h-e9f  OAM (140 bytes) */
 	/* ea0-eff  NIL */
 	oam_read,
 	/* f00-fff  CPU */
@@ -204,7 +204,6 @@ void hram_write(uint16_t address, uint8_t value) {
 }
 
 void io_write(uint16_t address, uint8_t value) {
-
 }
 
 void write(uint16_t address, uint8_t value) {
