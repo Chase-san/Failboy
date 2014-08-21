@@ -22,10 +22,12 @@ typedef void (*instruction_cb_f)(uint8_t);
 
 struct registers r;
 
-void NOP() { }
-void XXX() {  /* missing opcode */ }
+uint32_t cycle_counter = 0;
 
-static const instruction_f instrmapCB[64] = {
+void NOP() { }
+void XXX() { /* missing opcode */ }
+
+static const instruction_f instr_cb_map[64] = {
 	RLC_B, RLC_C, RLC_D, RLC_E, RLC_H, RLC_L, RLC_aHL, RLCA,	/* 00-07 */
 	RRC_B, RRC_C, RRC_D, RRC_E, RRC_H, RRC_L, RRC_aHL, RRCA,	/* 08-0f */
 	RL_B, RL_C, RL_D, RL_E, RL_H, RL_L, RL_aHL, RLA,	/* 10-17 */
@@ -36,37 +38,58 @@ static const instruction_f instrmapCB[64] = {
 	SRL_B, SRL_C, SRL_D, SRL_E, SRL_H, SRL_L, SRL_aHL, SRL_A,	/* 38-3f */
 };
 
-static const instruction_cb_f instrmapBIT[8] = {
+static const instruction_cb_f instr_cb_bit_map[8] = {
 	BIT_b_B, BIT_b_C, BIT_b_D, BIT_b_E, BIT_b_H, BIT_b_L, BIT_b_aHL, BIT_b_A
 };
-static const instruction_cb_f instrmapRES[8] = {
+static const instruction_cb_f instr_cb_res_map[8] = {
 	RES_b_B, RES_b_C, RES_b_D, RES_b_E, RES_b_H, RES_b_L, RES_b_aHL, RES_b_A
 };
-static const instruction_cb_f instrmapSET[8] = {
+static const instruction_cb_f instr_cb_set_map[8] = {
 	SET_b_B, SET_b_C, SET_b_D, SET_b_E, SET_b_H, SET_b_L, SET_b_aHL, SET_b_A
 };
 
-static inline void INSTRCB() {
+static const uint8_t instr_cb_timing[256] = {
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,3,2,2,2,2,2,2,2,3,2,
+	2,2,2,2,2,2,3,2,2,2,2,2,2,2,3,2,
+	2,2,2,2,2,2,3,2,2,2,2,2,2,2,3,2,
+	2,2,2,2,2,2,3,2,2,2,2,2,2,2,3,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2,
+	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2
+};
+
+static inline void step_cb() {
 	uint8_t op = rpc8();
 	if(op < 0x40) {
-		instrmapCB[op]();
+		instr_cb_map[op]();
+		cycle_counter += instr_cb_timing[op] << 2;
 		return;
 	}
-	if(op < 0x80) {
-		/* BIT */
-		instrmapBIT[op & 7]((op>>3)&7);
+	if(op < 0x80) { /* BIT */
+		instr_cb_bit_map[op & 7]((op>>3)&7);
+		cycle_counter += instr_cb_timing[op] << 2;
 		return;
 	}
-	if(op < 0xC0) {
-		/* RES */
-		instrmapRES[op & 7]((op>>3)&7);
+	if(op < 0xC0) { /* RES */
+		instr_cb_res_map[op & 7]((op>>3)&7);
+		cycle_counter += instr_cb_timing[op] << 2;
 		return;
 	}
 	/* SET */
-	instrmapSET[op & 7]((op>>3)&7);
+	instr_cb_set_map[op & 7]((op>>3)&7);
+	cycle_counter += instr_cb_timing[op] << 2;
 }
 
-static const instruction_f instrmap[256] = {
+static const instruction_f instr_map[256] = {
 	NOP, LD_BC_nn, LD_aBC_A, INC_BC, INC_B, DEC_B, LD_B_n, RLCA,	/* 00-07 */
 	LD_ann_SP, ADD_HL_BC, LD_A_aBC, DEC_BC, INC_C, DEC_C, LD_C_n, RRCA,	/* 08-0f */
 	STOP, LD_DE_nn, LD_aDE_A, INC_DE, INC_D, DEC_D, LD_D_n, RLA,	/* 10-17 */
@@ -92,7 +115,7 @@ static const instruction_f instrmap[256] = {
 	OR_B, OR_C, OR_D, OR_E, OR_H, OR_L, OR_aHL, OR_A,	/* b0-b7 */
 	CP_B, CP_C, CP_D, CP_E, CP_H, CP_L, CP_aHL, CP_A,	/* b8-bf */
 	RET_NZ, POP_BC, JP_NZ, JP, CALL_NZ_nn, PUSH_BC, ADD_A_n, RST00,	/* c0-c7 */
-	RET_Z, RET, JP_Z, INSTRCB, CALL_Z_nn, CALL_nn, ADC_A_n, RST08,	/* c8-cf */
+	RET_Z, RET, JP_Z, step_cb, CALL_Z_nn, CALL_nn, ADC_A_n, RST08,	/* c8-cf */
 	RET_NC, POP_DE, JP_NC, XXX, CALL_NC_nn, PUSH_DE, SUB_n, RST10,	/* d0-d7 */
 	RET_C, RETI, JP_C, XXX, CALL_C_nn, XXX, SBC_A_n, RST18,	/* d8-df */
 	LDH_an_A, POP_HL, LD_aC_A, XXX, XXX, PUSH_HL, AND_n, RST20,	/* e0-e7 */
@@ -101,12 +124,33 @@ static const instruction_f instrmap[256] = {
 	LDHL_SP_n, LD_SP_HL, LD_A_ann, EI, XXX, XXX, CP_n, RST38,	/* f8-ff */
 };
 
-void exec() {
+
+static const uint8_t instr_timing[256] = {
+	1,3,2,2,1,1,2,1,5,2,2,2,1,1,2,1,
+	0,3,2,2,1,1,2,1,3,2,2,2,1,1,2,1,
+	2,3,2,2,1,1,2,1,2,2,2,2,1,1,2,1,
+	2,3,2,2,3,3,3,1,2,2,2,2,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	2,2,2,2,2,2,0,2,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	1,1,1,1,1,1,2,1,1,1,1,1,1,1,2,1,
+	2,3,3,4,3,4,2,4,2,4,3,0,3,6,2,4,
+	2,3,3,0,3,4,2,4,2,4,3,0,3,0,2,4,
+	3,3,2,0,0,4,2,4,4,1,4,0,0,0,2,4,
+	3,3,2,1,0,4,2,4,3,2,4,1,0,0,2,4
+};
+
+void step() {
 	uint8_t op = rpc8();
-	instrmap[op]();
+	instr_map[op]();
+	cycle_counter += instr_timing[op] << 2;
 }
 
-void cpu_init() {
+void cpu_bios_init() {
 	/*
 	0x1 - Gameboy/Super Gameboy
 	0x11 - Gameboy Color
@@ -119,4 +163,36 @@ void cpu_init() {
 	r.HL = 0x14D;
 	r.PC = 0x100;
 	r.SP = 0xFFFE;
+	
+	write(0xFF05, 0x00); // TIMA
+	write(0xFF06, 0x00); // TMA
+	write(0xFF07, 0x00); // TAC
+	write(0xFF10, 0x80); // NR10
+	write(0xFF11, 0xBF); // NR11
+	write(0xFF12, 0xF3); // NR12
+	write(0xFF14, 0xBF); // NR14
+	write(0xFF16, 0x3F); // NR21
+	write(0xFF17, 0x00); // NR22
+	write(0xFF19, 0xBF); // NR24
+	write(0xFF1A, 0x7F); // NR30
+	write(0xFF1B, 0xFF); // NR31
+	write(0xFF1C, 0x9F); // NR32
+	write(0xFF1E, 0xBF); // NR33
+	write(0xFF20, 0xFF); // NR41
+	write(0xFF21, 0x00); // NR42
+	write(0xFF22, 0x00); // NR43
+	write(0xFF23, 0xBF); // NR30
+	write(0xFF24, 0x77); // NR50
+	write(0xFF25, 0xF3); // NR51
+	write(0xFF26, 0xF1); // NR52 // 0xF1 GB, 0xF0 SGB
+	write(0xFF40, 0x91); // LCDC
+	write(0xFF42, 0x00); // SCY
+	write(0xFF43, 0x00); // SCX
+	write(0xFF45, 0x00); // LYC
+	write(0xFF47, 0xFC); // BGP
+	write(0xFF48, 0xFF); // OBP0
+	write(0xFF49, 0xFF); // OBP1
+	write(0xFF4A, 0x00); // WY
+	write(0xFF4B, 0x00); // WX
+	write(0xFFFF, 0x00); // IE
 }

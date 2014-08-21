@@ -17,8 +17,16 @@
 #include <stdio.h>
 
 enum {
+	IO_P1 = 0xFF00,
 	IO_SB = 0xFF01,
 	IO_SC = 0xFF02,
+	IO_DIV = 0xFF04,
+	IO_TIMA = 0xFF05,
+	IO_TMA = 0xFF06,
+	IO_TAC = 0xFF07,
+	IO_IF = 0xFF0F,
+	IO_DMA = 0xFF46,
+	IO_IE = 0xFFFF
 };
 
 static uint8_t sb = 0;
@@ -40,6 +48,7 @@ void io_write(uint16_t address, uint8_t value) {
 			}
 			break;
 		default:
+			//printf("WRITE %02x -> %04x\n", value, address);
 			break;
 	}
 }

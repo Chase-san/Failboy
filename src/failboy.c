@@ -20,9 +20,9 @@
 int main(int argc, char *argv[]) {
 	cart_load("tests/cpu_instrs.gb");
 	mem_alloc();
-	cpu_init();
-	for(uint32_t i = 0; i < 4294967295; ++i) {
-		exec();
+	cpu_bios_init();
+	for(uint32_t i = 0; i < 28000000; ++i) {
+		step();
 	}
 	printf("\n\nEND OF LINE\n");
 	mem_free();

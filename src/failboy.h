@@ -91,11 +91,12 @@ struct registers {
 };
 
 extern struct registers r;
+extern uint32_t cycle_counter;
 
 #define rpc8() (read(r.PC++))
 #define rpc16() ((rpc8()) | (rpc8() << 8))
 
-void cpu_init();
-void exec();
+void cpu_bios_init();
+void step();
 
 #endif /* _FAILBOY_H_ */
