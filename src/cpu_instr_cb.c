@@ -15,10 +15,18 @@
 
 #include "failboy.h"
 
-uint8_t vram_read(uint16_t address) {
-	return vram[address - 0x8000];
+/* **************************************** */
+/* CB Instructions */
+static inline uint8_t SWAP(uint8_t n) {
+	r.F = 0;
+	r.F_Z = n == 0;
+	return (n >> 4) | (n << 4);
 }
-
-void vram_write(uint16_t address, uint8_t value) {
-	vram[address - 0x8000] = value;
-}
+void SWAP_A() { r.A = SWAP(r.A); }
+void SWAP_B() { r.B = SWAP(r.B); }
+void SWAP_C() { r.C = SWAP(r.C); }
+void SWAP_D() { r.D = SWAP(r.D); }
+void SWAP_E() { r.E = SWAP(r.E); }
+void SWAP_H() { r.H = SWAP(r.H); }
+void SWAP_L() { r.L = SWAP(r.L); }
+void SWAP_aHL() { write(r.HL, SWAP(read(r.HL))); }

@@ -14,11 +14,31 @@
  */
 
 #include "failboy.h"
+#include <stdio.h>
 
-uint8_t vram_read(uint16_t address) {
-	return vram[address - 0x8000];
+enum {
+	IO_SB = 0xFF01,
+	IO_SC = 0xFF02,
+};
+
+static uint8_t sb = 0;
+
+uint8_t io_read(uint16_t address) {
+	return 0;
 }
 
-void vram_write(uint16_t address, uint8_t value) {
-	vram[address - 0x8000] = value;
+void io_write(uint16_t address, uint8_t value) {
+	switch(address) {
+		case IO_SB: /* console */
+			sb = value;
+			break;
+		case IO_SC:
+			/* transfer the data */
+			if(value == 0x81) {
+				printf("%c", sb);
+			}
+			break;
+		default:
+			break;
+	}
 }

@@ -13,12 +13,17 @@
  * GNU General Public License for more details.
  */
 
-#include "failboy.h"
+#ifndef _CPU_INSTR_CB_H_
+#define _CPU_INSTR_CB_H_
 
-uint8_t vram_read(uint16_t address) {
-	return vram[address - 0x8000];
-}
+/* This file defines the DMG two byte 0xCB instructions. */
+void SWAP_A();
+void SWAP_B();
+void SWAP_C();
+void SWAP_D();
+void SWAP_E();
+void SWAP_H();
+void SWAP_L();
+void SWAP_aHL();
 
-void vram_write(uint16_t address, uint8_t value) {
-	vram[address - 0x8000] = value;
-}
+#endif

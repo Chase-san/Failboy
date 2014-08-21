@@ -12,6 +12,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+
 #include "failboy.h"
 #include <stdlib.h>
 
@@ -24,6 +25,10 @@ uint8_t ext2_read(uint16_t); /* A000-BFFF */
 void ext0_write(uint16_t, uint8_t); /* 0000-3FFF */
 void ext1_write(uint16_t, uint8_t); /* 4000-7FFF */
 void ext2_write(uint16_t, uint8_t); /* A000-BFFF */
+
+/* io.c */
+uint8_t io_read(uint16_t); /* FF00-FF7F */
+void io_write(uint16_t, uint8_t); /* FF80-FFFE */
 
 /* video.c */
 uint8_t vram_read(uint16_t); /* 8000-9FFF */
@@ -61,7 +66,6 @@ uint8_t oam_read(uint16_t); /* FE00-FE9F */
 uint8_t fxxx_read(uint16_t); /* F000-FFFF */
 uint8_t cpu_read(uint16_t); /* FF00-FFFF */
 uint8_t hram_read(uint16_t); /* FF80-FFFE */
-uint8_t io_read(uint16_t); /* FF00-FF7F */
 
 
 /* memory map */
@@ -129,10 +133,6 @@ uint8_t hram_read(uint16_t address) {
 	return hram[(uint8_t)address - 0x80];
 }
 
-uint8_t io_read(uint16_t address) {
-	return 0;
-}
-
 uint8_t read(uint16_t address) {
 	/* Use address blocks to avoid if branching. :D */
 	/* With just 16 blocks we can massively reduce the branching here. */
@@ -151,7 +151,6 @@ void wrame_write(uint16_t, uint8_t); /* E000-FDFF */
 void oam_write(uint16_t, uint8_t); /* FE00-FE9F */
 void fxxx_write(uint16_t, uint8_t); /* F000-FFFF */
 void cpu_write(uint16_t, uint8_t); /* FF00-FFFF */
-void io_write(uint16_t, uint8_t); /* FF80-FFFE */
 void hram_write(uint16_t, uint8_t); /* FF00-FF7F */
 void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
 
@@ -220,9 +219,6 @@ void hram_write(uint16_t address, uint8_t value) {
 	hram[(uint8_t)address - 0x80] = value;
 }
 
-void io_write(uint16_t address, uint8_t value) {
-}
-
 void write(uint16_t address, uint8_t value) {
 	/* Use address blocks to avoid if branching. :D */
 	/* With just 16 blocks we can massively reduce the branching here. */
@@ -233,3 +229,4 @@ void write16(uint16_t address, uint16_t value) {
 	write(address, value);
 	write(address + 1, value >> 8);
 }
+
