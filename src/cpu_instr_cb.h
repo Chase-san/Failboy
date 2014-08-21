@@ -26,4 +26,90 @@ void SWAP_H();
 void SWAP_L();
 void SWAP_aHL();
 
+void RLC_B();
+void RLC_C();
+void RLC_D();
+void RLC_E();
+void RLC_H();
+void RLC_L();
+void RLC_aHL();
+
+void RL_B();
+void RL_C();
+void RL_D();
+void RL_E();
+void RL_H();
+void RL_L();
+void RL_aHL();
+
+void RRC_B();
+void RRC_C();
+void RRC_D();
+void RRC_E();
+void RRC_H();
+void RRC_L();
+void RRC_aHL();
+
+void RR_B();
+void RR_C();
+void RR_D();
+void RR_E();
+void RR_H();
+void RR_L();
+void RR_aHL();
+
+void SLA_A();
+void SLA_B();
+void SLA_C();
+void SLA_D();
+void SLA_E();
+void SLA_H();
+void SLA_L();
+void SLA_aHL();
+
+void SRA_A();
+void SRA_B();
+void SRA_C();
+void SRA_D();
+void SRA_E();
+void SRA_H();
+void SRA_L();
+void SRA_aHL();
+
+void SRL_A();
+void SRL_B();
+void SRL_C();
+void SRL_D();
+void SRL_E();
+void SRL_H();
+void SRL_L();
+void SRL_aHL();
+
+void BIT_b_A(uint8_t);
+void BIT_b_B(uint8_t);
+void BIT_b_C(uint8_t);
+void BIT_b_D(uint8_t);
+void BIT_b_E(uint8_t);
+void BIT_b_H(uint8_t);
+void BIT_b_L(uint8_t);
+void BIT_b_aHL(uint8_t);
+
+void RES_b_A(uint8_t b);
+void RES_b_B(uint8_t b);
+void RES_b_C(uint8_t b);
+void RES_b_D(uint8_t b);
+void RES_b_E(uint8_t b);
+void RES_b_H(uint8_t b);
+void RES_b_L(uint8_t b);
+void RES_b_aHL(uint8_t b);
+
+void SET_b_A(uint8_t b);
+void SET_b_B(uint8_t b);
+void SET_b_C(uint8_t b);
+void SET_b_D(uint8_t b);
+void SET_b_E(uint8_t b);
+void SET_b_H(uint8_t b);
+void SET_b_L(uint8_t b);
+void SET_b_aHL(uint8_t b);
+
 #endif

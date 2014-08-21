@@ -95,8 +95,6 @@ extern struct registers r;
 #define rpc8() (read(r.PC++))
 #define rpc16() ((rpc8()) | (rpc8() << 8))
 
-typedef void (*instruction_f)();
-
 void cpu_init();
 void exec();
 

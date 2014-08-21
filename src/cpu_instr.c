@@ -129,11 +129,11 @@ void LD_SP_nn() { r.SP = rpc16(); }
 void LD_SP_HL() { r.SP = r.HL; }
 
 void LDHL_SP_n() {
-	char n = rpc8();
+	register int8_t n = rpc8();
 	r.F = 0;
 	r.F_H = (r.SP & 0xF) + (n & 0xf) > 0xF;
 	r.F_C = (r.SP & 0xFF) + (n & 0xfF) > 0xFF;
-	r.HL = r.SP + n;
+	r.HL = (uint16_t)(r.SP + n);
 }
 
 void LD_ann_SP() { write16(rpc16(), r.SP); }
@@ -153,7 +153,8 @@ static inline uint16_t POP16() {
 	return ret;
 }
 
-void POP_AF() { r.AF = POP16(); }
+/* Lower bits of F are never ever set. */
+void POP_AF() { r.AF = POP16() & 0xFFF0; }
 void POP_BC() { r.BC = POP16(); }
 void POP_DE() { r.DE = POP16(); }
 void POP_HL() { r.HL = POP16(); }
@@ -294,7 +295,7 @@ void INC_E() { INC(++r.E); }
 void INC_H() { INC(++r.H); }
 void INC_L() { INC(++r.L); }
 void INC_aHL() {
-	uint8_t tmp = read(r.HL) + 1;
+	register uint8_t tmp = read(r.HL) + 1;
 	write(r.HL, tmp);
 	INC(tmp);
 }
@@ -312,7 +313,7 @@ void DEC_E() { DEC(--r.E); }
 void DEC_H() { DEC(--r.H); }
 void DEC_L() { DEC(--r.L); }
 void DEC_aHL() {
-	uint8_t tmp = read(r.HL) - 1;
+	register uint8_t tmp = read(r.HL) - 1;
 	write(r.HL, tmp);
 	DEC(tmp);
 }
@@ -324,7 +325,7 @@ static inline void ADD_HL(uint16_t n) {
 	r.F_N = 0;
 	r.F_H = (r.HL & 0xFFF) + (n & 0xFFF) > 0xFFF;
 	r.F_C = (r.HL + n) > 0xFFFF;
-	r.HL += n;
+	r.HL = r.HL + n;
 }
 void ADD_HL_BC() { ADD_HL(r.BC); }
 void ADD_HL_DE() { ADD_HL(r.DE); }
@@ -332,48 +333,48 @@ void ADD_HL_HL() { ADD_HL(r.HL); }
 void ADD_HL_SP() { ADD_HL(r.SP); }
 
 void ADD_SP_n() {
-	char n = rpc8();
+	register int8_t n = rpc8();
 	r.F = 0;
 	r.F_H = (r.SP & 0xF) + (n & 0xf) > 0xF;
 	r.F_C = (r.SP & 0xFF) + (n & 0xfF) > 0xFF;
-	r.SP += n;
+	r.SP = (uint16_t)(r.SP + n);
 }
 
-void INC_BC() { ++r.BC; }
-void INC_DE() { ++r.DE; }
-void INC_HL() { ++r.HL; }
-void INC_SP() { ++r.SP; }
+void INC_BC() { r.BC += 1; }
+void INC_DE() { r.DE += 1; }
+void INC_HL() { r.HL += 1; }
+void INC_SP() { r.SP += 1; }
 
-void DEC_BC() { --r.BC; }
-void DEC_DE() { --r.DE; }
-void DEC_HL() { --r.HL; }
-void DEC_SP() { --r.SP; }
+void DEC_BC() { r.BC -= 1; }
+void DEC_DE() { r.DE -= 1; }
+void DEC_HL() { r.HL -= 1; }
+void DEC_SP() { r.SP -= 1; }
 
 /* **************************************** */
 /* Rotates & Shifts */
 void RLCA() {
-	uint8_t bit = (r.A >> 7) & 1;
+	register uint8_t bit = (r.A >> 7) & 1;
 	r.A = (r.A << 1) | bit;
 	r.F = 0;
 	r.F_C = bit;
 	r.F_Z = !r.A;
 }
 void RLA() {
-	uint8_t bit = (r.A >> 7) & 1;
+	register uint8_t bit = (r.A >> 7) & 1;
 	r.A = (r.A << 1) | r.F_C;
 	r.F = 0;
 	r.F_C = bit;
 	r.F_Z = !r.A;
 }
 void RRCA() {
-	uint8_t bit = r.A & 1;
+	register uint8_t bit = r.A & 1;
 	r.A = (r.A >> 1) | (bit << 7);
 	r.F = 0;
 	r.F_C = bit;
 	r.F_Z = !r.A;
 }
 void RRA() {
-	uint8_t bit = r.A & 1;
+	register uint8_t bit = r.A & 1;
 	r.A = (r.A >> 1) | (r.F_C << 7);
 	r.F = 0;
 	r.F_C = bit;
@@ -385,25 +386,25 @@ void RRA() {
 /* Jumps */
 void JP() { r.PC = rpc16(); }
 void JP_NZ() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(!r.F_Z) {
 		r.PC = addr;
 	}
 }
 void JP_Z() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(r.F_Z) {
 		r.PC = addr;
 	}
 }
 void JP_NC() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(!r.F_C) {
 		r.PC = addr;
 	}
 }
 void JP_C() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(r.F_C) {
 		r.PC = addr;
 	}
@@ -417,25 +418,25 @@ static inline void JR(int8_t n) {
 void JR_n() { JR(rpc8()); }
 
 void JR_NZ_n() {
-	uint8_t n = rpc8();
+	register uint8_t n = rpc8();
 	if(!r.F_Z) {
 		JR(n);
 	}
 }
 void JR_Z_n() {
-	uint8_t n = rpc8();
+	register uint8_t n = rpc8();
 	if(r.F_Z) {
 		JR(n);
 	}
 }
 void JR_NC_n() {
-	uint8_t n = rpc8();
+	register uint8_t n = rpc8();
 	if(!r.F_C) {
 		JR(n);
 	}
 }
 void JR_C_n() {
-	uint8_t n = rpc8();
+	register uint8_t n = rpc8();
 	if(r.F_C) {
 		JR(n);
 	}
@@ -451,25 +452,25 @@ static inline void CALL(uint16_t address) {
 void CALL_nn() { CALL(rpc16()); }
 
 void CALL_NZ_nn() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(!r.F_Z) {
 		CALL(addr);
 	}
 }
 void CALL_Z_nn() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(r.F_Z) {
 		CALL(addr);
 	}
 }
 void CALL_NC_nn() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(!r.F_C) {
 		CALL(addr);
 	}
 }
 void CALL_C_nn() {
-	uint16_t addr = rpc16();
+	register uint16_t addr = rpc16();
 	if(r.F_C) {
 		CALL(addr);
 	}
@@ -502,26 +503,31 @@ void SCF() {
 	r.F_C = 1;
 }
 void DAA() {
-	/* sigh let's get this shit over with */
-	/* Every time someone has to emulate DAA, some cute anmial perishes */
-	uint16_t tmp = r.A;
+	/* //sigh// let's get this shit over with */
+	register int32_t tmp = r.A;
+	
 	if(r.F_N) {
 		if(r.F_H) {
 			tmp -= 6;
+			if(!r.F_C) {
+				tmp &= 0xFF;
+			}
 		}
 		if(r.F_C) {
 			tmp -= 0x60;
 		}
 	} else {
-		if(r.F_H || (r.A & 0xF) > 9) {
-			tmp += 6;
+		if(r.F_H || (tmp & 0xF) > 0x9) {
+			tmp += 0x6;
 		}
-		if(r.F_C || r.A > 0x9F) {
+		if(r.F_C || tmp > 0x9F) {
 			tmp += 0x60;
 		}
 	}
+	
 	r.F_H = 0;
-	r.F_C = (tmp & 0x100) == 0x100;
+	if(tmp & 0x100)
+		r.F_C = 1;
 	r.A = tmp & 0xFF;
 	r.F_Z = !r.A;
 }

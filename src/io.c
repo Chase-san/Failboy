@@ -29,7 +29,8 @@ uint8_t io_read(uint16_t address) {
 
 void io_write(uint16_t address, uint8_t value) {
 	switch(address) {
-		case IO_SB: /* console */
+		/* link cable for console ! :D */
+		case IO_SB:
 			sb = value;
 			break;
 		case IO_SC:

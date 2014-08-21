@@ -17,48 +17,53 @@
 #include "cpu_instr.h"
 #include "cpu_instr_cb.h"
 
+typedef void (*instruction_f)();
+typedef void (*instruction_cb_f)(uint8_t);
+
 struct registers r;
 
 void NOP() { }
 void XXX() {  /* missing opcode */ }
 
-static const instruction_f instrmapCB[256] = {
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 00-07 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 08-0f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 10-17 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 18-1f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 20-27 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 28-2f */
+static const instruction_f instrmapCB[64] = {
+	RLC_B, RLC_C, RLC_D, RLC_E, RLC_H, RLC_L, RLC_aHL, RLCA,	/* 00-07 */
+	RRC_B, RRC_C, RRC_D, RRC_E, RRC_H, RRC_L, RRC_aHL, RRCA,	/* 08-0f */
+	RL_B, RL_C, RL_D, RL_E, RL_H, RL_L, RL_aHL, RLA,	/* 10-17 */
+	RR_B, RR_C, RR_D, RR_E, RR_H, RR_L, RR_aHL, RRA,	/* 18-1f */
+	SLA_B, SLA_C, SLA_D, SLA_E, SLA_H, SLA_L, SLA_aHL, SLA_A,	/* 20-27 */
+	SRA_B, SRA_C, SRA_D, SRA_E, SRA_H, SRA_L, SRA_aHL, SRA_A,	/* 28-2f */
 	SWAP_B, SWAP_C, SWAP_D, SWAP_E, SWAP_H, SWAP_L, SWAP_aHL, SWAP_A,	/* 30-37 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 38-3f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 40-47 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 48-4f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 50-57 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 50-57 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 60-67 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 68-6f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 70-77 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 78-7f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 80-87 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 88-8f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 90-97 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* 98-9f */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* a0-a7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* a8-af */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* b0-b7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* b8-bf */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* c0-c7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* c8-cf */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* d0-d7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* d8-df */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* e0-e7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* e8-ef */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* f0-f7 */
-	NOP, NOP, NOP, NOP, NOP, NOP, NOP, NOP,	/* f8-ff */
+	SRL_B, SRL_C, SRL_D, SRL_E, SRL_H, SRL_L, SRL_aHL, SRL_A,	/* 38-3f */
+};
+
+static const instruction_cb_f instrmapBIT[8] = {
+	BIT_b_B, BIT_b_C, BIT_b_D, BIT_b_E, BIT_b_H, BIT_b_L, BIT_b_aHL, BIT_b_A
+};
+static const instruction_cb_f instrmapRES[8] = {
+	RES_b_B, RES_b_C, RES_b_D, RES_b_E, RES_b_H, RES_b_L, RES_b_aHL, RES_b_A
+};
+static const instruction_cb_f instrmapSET[8] = {
+	SET_b_B, SET_b_C, SET_b_D, SET_b_E, SET_b_H, SET_b_L, SET_b_aHL, SET_b_A
 };
 
 static inline void INSTRCB() {
-	instrmapCB[rpc8()]();
+	uint8_t op = rpc8();
+	if(op < 0x40) {
+		instrmapCB[op]();
+		return;
+	}
+	if(op < 0x80) {
+		/* BIT */
+		instrmapBIT[op & 7]((op>>3)&7);
+		return;
+	}
+	if(op < 0xC0) {
+		/* RES */
+		instrmapRES[op & 7]((op>>3)&7);
+		return;
+	}
+	/* SET */
+	instrmapSET[op & 7]((op>>3)&7);
 }
 
 static const instruction_f instrmap[256] = {
