@@ -1,0 +1,40 @@
+{
+	"version": 6,
+	"cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+	"configurePresets": [
+		{
+			"name": "clang-mingw",
+			"displayName": "clang + lld, MinGW-w64 sysroot (Debug)",
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/build",
+			"toolchainFile": "${sourceDir}/cmake/clang-mingw.cmake",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+			"condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+		},
+		{
+			"name": "clang-mingw-release",
+			"inherits": "clang-mingw",
+			"displayName": "clang + lld, MinGW-w64 sysroot (Release)",
+			"binaryDir": "${sourceDir}/build-release",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+		},
+		{
+			"name": "default",
+			"displayName": "System compiler (Debug)",
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/build",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+			"condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+		}
+	],
+	"buildPresets": [
+		{ "name": "clang-mingw", "configurePreset": "clang-mingw" },
+		{ "name": "clang-mingw-release", "configurePreset": "clang-mingw-release" },
+		{ "name": "default", "configurePreset": "default" }
+	],
+	"testPresets": [
+		{ "name": "clang-mingw", "configurePreset": "clang-mingw", "output": { "outputOnFailure": true } },
+		{ "name": "clang-mingw-release", "configurePreset": "clang-mingw-release", "output": { "outputOnFailure": true } },
+		{ "name": "default", "configurePreset": "default", "output": { "outputOnFailure": true } }
+	]
+}

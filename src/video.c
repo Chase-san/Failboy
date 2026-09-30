@@ -15,10 +15,35 @@
 
 #include "failboy.h"
 
-uint8_t vram_read(uint16_t address) {
-	return vram[address - 0x8000];
-}
+enum {
+  LCDC_ENABLE = 0x80,
+  LCD_HEIGHT = 144,  /* visible lines; VBlank starts after them */
+  LCD_LINES = 154,   /* lines per frame, including VBlank */
+  LINE_CYCLES = 456, /* T-cycles per line */
+};
 
-void vram_write(uint16_t address, uint8_t value) {
-	vram[address - 0x8000] = value;
+/* T-cycles into the current line */
+static uint32_t line_cycles = 0;
+
+uint8_t vram_read(uint16_t address) { return vram[address - VRAM_START]; }
+
+void vram_write(uint16_t address, uint8_t value) { vram[address - VRAM_START] = value; }
+
+/* Only LY timing so far. */
+void video_tick(uint32_t cycles) {
+  if (!(IO_REG(IO_LCDC) & LCDC_ENABLE)) {
+    IO_REG(IO_LY) = 0;
+    line_cycles = 0;
+    return;
+  }
+  line_cycles += cycles;
+  while (line_cycles >= LINE_CYCLES) {
+    line_cycles -= LINE_CYCLES;
+    if (++IO_REG(IO_LY) == LCD_LINES) {
+      IO_REG(IO_LY) = 0;
+    }
+    if (IO_REG(IO_LY) == LCD_HEIGHT) {
+      io_request(INT_VBLANK);
+    }
+  }
 }

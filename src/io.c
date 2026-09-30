@@ -13,42 +13,166 @@
  * GNU General Public License for more details.
  */
 
-#include "failboy.h"
 #include <stdio.h>
+#include <string.h>
+
+#include "failboy.h"
 
 enum {
-	IO_P1 = 0xFF00,
-	IO_SB = 0xFF01,
-	IO_SC = 0xFF02,
-	IO_DIV = 0xFF04,
-	IO_TIMA = 0xFF05,
-	IO_TMA = 0xFF06,
-	IO_TAC = 0xFF07,
-	IO_IF = 0xFF0F,
-	IO_DMA = 0xFF46,
-	IO_IE = 0xFFFF
+  P1_SELECT = 0x30,     /* which button group is being read */
+  P1_NO_BUTTONS = 0x0F, /* the inputs are active low */
+  P1_UNUSED = 0xC0,
+  SC_TRANSFER = 0x80, /* start / in progress */
+  SC_INTERNAL_CLOCK = 0x01,
+  SC_UNUSED = 0x7E,
+  SB_NO_PARTNER = 0xFF, /* the line idles high, so a lone Game Boy receives all 1s */
+  SERIAL_CYCLES = 4096, /* 8 bits at 8192 Hz */
+  TAC_ENABLE = 0x04,
+  TAC_CLOCK = 0x03,
+  TAC_UNUSED = 0xF8,
+  IF_UNUSED = 0xE0,
+  DOCTOR_LY = 0x90, /* Gameboy Doctor's logs were made with LY stuck here */
 };
 
-static uint8_t sb = 0;
+uint8_t io_reg[IO_SIZE];
+uint8_t io_ie = 0;
+
+/* DIV is the top byte of this 16-bit counter, which ticks every T-cycle. */
+static uint16_t div_counter = 0;
+
+/* TAC selects which divider bit TIMA counts the falling edges of: 4096, 262144, 65536, 16384 Hz */
+static const uint8_t tac_bit[4] = {9, 3, 5, 7};
+
+/* T-cycles left in the current serial transfer */
+static uint16_t serial_timer = 0;
+
+/* The last few characters sent over serial, to spot Blargg's "Passed"/"Failed". */
+static char serial_tail[6];
+static int serial_result = SERIAL_NONE;
+
+void io_request(uint8_t mask) { IO_REG(IO_IF) |= mask; }
+
+static int timer_signal(void) {
+  uint8_t tac = IO_REG(IO_TAC);
+  return (tac & TAC_ENABLE) && ((div_counter >> tac_bit[tac & TAC_CLOCK]) & 1);
+}
+
+/* Call after anything that can move the timer signal (DIV ticking or reset, TAC writes). */
+static void timer_update(int before) {
+  if (before && !timer_signal()) {
+    if (++IO_REG(IO_TIMA) == 0) {
+      IO_REG(IO_TIMA) = IO_REG(IO_TMA);
+      io_request(INT_TIMER);
+    }
+  }
+}
+
+void io_tick(uint32_t cycles) {
+  for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
+    int before = timer_signal();
+    div_counter += M_CYCLE;
+    timer_update(before);
+
+    if (serial_timer) {
+      serial_timer -= M_CYCLE;
+      if (!serial_timer) {
+        IO_REG(IO_SB) = SB_NO_PARTNER;
+        IO_REG(IO_SC) &= ~SC_TRANSFER;
+        if (!doctor) {
+          io_request(INT_SERIAL);
+        }
+      }
+    }
+  }
+}
+
+static void serial_out(uint8_t c) {
+  FILE *out = stdout;
+  if (doctor) {
+    /* stdout is carrying the trace */
+    out = stderr;
+  }
+  fputc(c, out);
+  fflush(out);
+
+  memmove(serial_tail, serial_tail + 1, sizeof(serial_tail) - 1);
+  serial_tail[sizeof(serial_tail) - 1] = c;
+  if (memcmp(serial_tail, "Failed", sizeof(serial_tail)) == 0) {
+    serial_result = SERIAL_FAILED;
+  } else if (serial_result == SERIAL_NONE && memcmp(serial_tail, "Passed", sizeof(serial_tail)) == 0) {
+    serial_result = SERIAL_PASSED;
+  }
+}
+
+int io_serial_result(void) { return serial_result; }
 
 uint8_t io_read(uint16_t address) {
-	return 0;
+  switch (address) {
+    case IO_P1:
+      return P1_UNUSED | (IO_REG(IO_P1) & P1_SELECT) | P1_NO_BUTTONS;
+    case IO_SC:
+      return IO_REG(IO_SC) | SC_UNUSED;
+    case IO_DIV:
+      return div_counter >> 8;
+    case IO_TAC:
+      return IO_REG(IO_TAC) | TAC_UNUSED;
+    case IO_IF:
+      /* the unused bits read as 1, but Gameboy Doctor's logs have them clear */
+      if (doctor) {
+        return IO_REG(IO_IF);
+      }
+      return IO_REG(IO_IF) | IF_UNUSED;
+    case IO_LY:
+      if (doctor) {
+        return DOCTOR_LY;
+      }
+      return IO_REG(IO_LY);
+    case IO_IE:
+      return io_ie;
+    default:
+      return IO_REG(address);
+  }
 }
 
 void io_write(uint16_t address, uint8_t value) {
-	switch(address) {
-		/* link cable for console ! :D */
-		case IO_SB:
-			sb = value;
-			break;
-		case IO_SC:
-			/* transfer the data */
-			if(value == 0x81) {
-				printf("%c", sb);
-			}
-			break;
-		default:
-			//printf("WRITE %02x -> %04x\n", value, address);
-			break;
-	}
+  int before;
+  switch (address) {
+    case IO_SC:
+      IO_REG(IO_SC) = value;
+      /* link cable for console ! :D */
+      if ((value & SC_TRANSFER) && (value & SC_INTERNAL_CLOCK)) {
+        serial_out(IO_REG(IO_SB));
+        serial_timer = SERIAL_CYCLES;
+      }
+      break;
+    case IO_DIV:
+      before = timer_signal();
+      div_counter = 0;
+      timer_update(before);
+      break;
+    case IO_TAC:
+      before = timer_signal();
+      IO_REG(IO_TAC) = value;
+      timer_update(before);
+      break;
+    case IO_IF:
+      IO_REG(IO_IF) = value & INT_ALL;
+      break;
+    case IO_LY:
+      /* read-only */
+      break;
+    case IO_DMA:
+      /* OAM DMA, done all at once */
+      IO_REG(IO_DMA) = value;
+      for (uint16_t i = 0; i < OAM_SIZE; ++i) {
+        oam[i] = mem_read((value << 8) | i);
+      }
+      break;
+    case IO_IE:
+      io_ie = value;
+      break;
+    default:
+      IO_REG(address) = value;
+      break;
+  }
 }

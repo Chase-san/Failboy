@@ -28,6 +28,13 @@ tests/*
 old_src/*
 ref/*
 
+# CMake
+build*/
+CMakeUserPresets.json
+
+# clangd
+.cache/
+
 # =========================
 # Operating System Files
 # =========================
