@@ -42,6 +42,7 @@ typedef void (*write_f)(uint16_t, uint8_t);
 enum {
   M_CYCLE = 4,
   M_CYCLE_SHL = 2,  // left shift for converting M-cycles to T-cycles
+  CLOCK_HZ = 4194304,
 };
 
 /* failboy.c */
@@ -63,11 +64,18 @@ enum {
   IO_IF = 0xFF0F,
   IO_LCDC = 0xFF40,
   IO_STAT = 0xFF41,
+  IO_SCY = 0xFF42,
+  IO_SCX = 0xFF43,
   IO_LY = 0xFF44,
   IO_LYC = 0xFF45,
   IO_DMA = 0xFF46,
+  IO_BGP = 0xFF47,
+  IO_OBP0 = 0xFF48,
+  IO_OBP1 = 0xFF49,
+  IO_WY = 0xFF4A,
+  IO_WX = 0xFF4B,
   IO_IE = 0xFFFF,
-  IO_SIZE = 0x80 /* registers FF00-FF7F */
+  IO_SIZE = 0x80, /* registers FF00-FF7F */
 };
 
 /* IF/IE bits, highest priority first */
@@ -87,16 +95,41 @@ enum {
   SERIAL_FAILED,
 };
 
+/* buttons for io_joypad(); a set bit means pressed */
+enum {
+  JOYPAD_RIGHT = 0x01,
+  JOYPAD_LEFT = 0x02,
+  JOYPAD_UP = 0x04,
+  JOYPAD_DOWN = 0x08,
+  JOYPAD_A = 0x10,
+  JOYPAD_B = 0x20,
+  JOYPAD_SELECT = 0x40,
+  JOYPAD_START = 0x80,
+};
+
 extern uint8_t io_reg[IO_SIZE]; /* FF00-FF7F */
 extern uint8_t io_ie;           /* FFFF */
 #define IO_REG(address) (io_reg[(address) & (IO_SIZE - 1)])
 
 void io_request(uint8_t);
 void io_tick(uint32_t);
+void io_joypad(uint8_t);
 int io_serial_result(void);
 
 /* video.c */
+enum {
+  LCD_WIDTH = 160,
+  LCD_HEIGHT = 144,
+  LCD_LINES = 154,   /* per frame, including the 10 of VBlank */
+  LINE_CYCLES = 456, /* T-cycles per line */
+  FRAME_CYCLES = LCD_LINES * LINE_CYCLES,
+};
+
 void video_tick(uint32_t);
+uint8_t video_read(uint16_t);
+void video_write(uint16_t, uint8_t);
+const uint8_t *video_framebuffer(void); /* LCD_WIDTH * LCD_HEIGHT shades, 0 (lightest) to 3 (darkest) */
+uint32_t video_frames(void);            /* frames finished so far; one more each time VBlank starts */
 
 /* mem.c */
 enum {

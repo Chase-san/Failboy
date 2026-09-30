@@ -19,9 +19,13 @@
 #include "failboy.h"
 
 enum {
-  P1_SELECT = 0x30,     /* which button group is being read */
-  P1_NO_BUTTONS = 0x0F, /* the inputs are active low */
+  P1_DIRECTIONS = 0x10, /* clear to read the D-pad */
+  P1_BUTTONS = 0x20,    /* clear to read A, B, Select and Start */
+  P1_SELECT = 0x30,
+  P1_INPUTS = 0x0F, /* active low */
   P1_UNUSED = 0xC0,
+  JOYPAD_DIRECTIONS = 0x0F,
+  JOYPAD_BUTTONS_SHIFT = 4,
   SC_TRANSFER = 0x80, /* start / in progress */
   SC_INTERNAL_CLOCK = 0x01,
   SC_UNUSED = 0x7E,
@@ -31,7 +35,6 @@ enum {
   TAC_CLOCK = 0x03,
   TAC_UNUSED = 0xF8,
   IF_UNUSED = 0xE0,
-  DOCTOR_LY = 0x90, /* Gameboy Doctor's logs were made with LY stuck here */
 };
 
 uint8_t io_reg[IO_SIZE];
@@ -50,7 +53,33 @@ static uint16_t serial_timer = 0;
 static char serial_tail[6];
 static int serial_result = SERIAL_NONE;
 
+/* JOYPAD_* buttons held down */
+static uint8_t joypad = 0;
+
 void io_request(uint8_t mask) { IO_REG(IO_IF) |= mask; }
+
+void io_joypad(uint8_t pressed) {
+  /* a press pulls an input line low, which is what requests the interrupt */
+  if (pressed & ~joypad) {
+    io_request(INT_JOYPAD);
+  }
+  joypad = pressed;
+}
+
+static uint8_t joypad_read(void) {
+  uint8_t select = IO_REG(IO_P1) & P1_SELECT;
+  uint8_t pressed = 0;
+  if (!(select & P1_DIRECTIONS)) {
+    pressed |= joypad & JOYPAD_DIRECTIONS;
+  }
+  if (!(select & P1_BUTTONS)) {
+    pressed |= joypad >> JOYPAD_BUTTONS_SHIFT;
+  }
+  return P1_UNUSED | select | (~pressed & P1_INPUTS);
+}
+
+/* The PPU's registers; DMA sits in the middle of them but stays here. */
+static int is_video_register(uint16_t address) { return address >= IO_LCDC && address <= IO_WX && address != IO_DMA; }
 
 static int timer_signal(void) {
   uint8_t tac = IO_REG(IO_TAC);
@@ -107,9 +136,12 @@ static void serial_out(uint8_t c) {
 int io_serial_result(void) { return serial_result; }
 
 uint8_t io_read(uint16_t address) {
+  if (is_video_register(address)) {
+    return video_read(address);
+  }
   switch (address) {
     case IO_P1:
-      return P1_UNUSED | (IO_REG(IO_P1) & P1_SELECT) | P1_NO_BUTTONS;
+      return joypad_read();
     case IO_SC:
       return IO_REG(IO_SC) | SC_UNUSED;
     case IO_DIV:
@@ -122,11 +154,6 @@ uint8_t io_read(uint16_t address) {
         return IO_REG(IO_IF);
       }
       return IO_REG(IO_IF) | IF_UNUSED;
-    case IO_LY:
-      if (doctor) {
-        return DOCTOR_LY;
-      }
-      return IO_REG(IO_LY);
     case IO_IE:
       return io_ie;
     default:
@@ -136,6 +163,10 @@ uint8_t io_read(uint16_t address) {
 
 void io_write(uint16_t address, uint8_t value) {
   int before;
+  if (is_video_register(address)) {
+    video_write(address, value);
+    return;
+  }
   switch (address) {
     case IO_SC:
       IO_REG(IO_SC) = value;
@@ -157,9 +188,6 @@ void io_write(uint16_t address, uint8_t value) {
       break;
     case IO_IF:
       IO_REG(IO_IF) = value & INT_ALL;
-      break;
-    case IO_LY:
-      /* read-only */
       break;
     case IO_DMA:
       /* OAM DMA, done all at once */
