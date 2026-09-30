@@ -45,9 +45,19 @@ enum {
 /* failboy.c */
 extern int doctor; /* Gameboy Doctor trace mode */
 
+/* the machine emulated, picked by the cartridge's header unless --gb or --gbc says otherwise */
+enum {
+  MODEL_DMG,     /* the original Game Boy */
+  MODEL_CGB_DMG, /* a Game Boy Color running an original Game Boy game, in its compatibility mode */
+  MODEL_CGB,     /* a Game Boy Color running a color game */
+};
+
+extern int model;
+
 /* cart.c */
 int cart_load(const char *);
 void cart_free(void);
+int cart_cgb(void);                                         /* the header says the game can use a Game Boy Color */
 unsigned int cart_battery_ram_size(void);                   /* 0 unless the cartridge RAM has a battery */
 void cart_read_battery_ram(uint8_t *, unsigned int);        /* copies the battery RAM out, to save it */
 void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
@@ -83,6 +93,21 @@ enum {
   IO_OBP1 = 0xFF49,
   IO_WY = 0xFF4A,
   IO_WX = 0xFF4B,
+  IO_KEY1 = 0xFF4D,  /* CGB: speed switch */
+  IO_VBK = 0xFF4F,   /* CGB: VRAM bank */
+  IO_HDMA1 = 0xFF51, /* CGB: VRAM DMA source (high, low), destination (high, low), then length and mode */
+  IO_HDMA2 = 0xFF52,
+  IO_HDMA3 = 0xFF53,
+  IO_HDMA4 = 0xFF54,
+  IO_HDMA5 = 0xFF55,
+  IO_BCPS = 0xFF68, /* CGB: background palette index, then data */
+  IO_BCPD = 0xFF69,
+  IO_OCPS = 0xFF6A, /* CGB: object palette index, then data */
+  IO_OCPD = 0xFF6B,
+  IO_OPRI = 0xFF6C,  /* CGB: object priority mode */
+  IO_SVBK = 0xFF70,  /* CGB: WRAM bank */
+  IO_PCM12 = 0xFF76, /* CGB: the outputs of sound channels 1 and 2, then 3 and 4 */
+  IO_PCM34 = 0xFF77,
   IO_IE = 0xFFFF,
   IO_SIZE = 0x80, /* registers FF00-FF7F */
 };
@@ -124,6 +149,7 @@ void io_request(uint8_t);
 void io_tick(uint32_t);
 void io_joypad(uint8_t);
 int io_serial_result(void);
+int io_speed_switch(void); /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
 
 /* video.c */
 enum {
@@ -134,10 +160,13 @@ enum {
   FRAME_CYCLES = LCD_LINES * LINE_CYCLES,
 };
 
+void video_bios_init(void); /* the logo or palettes the boot ROM leaves */
 void video_tick(uint32_t);
+void video_stop(void); /* the screen with the clock stopped, by STOP */
 uint8_t video_read(uint16_t);
 void video_write(uint16_t, uint8_t);
-const uint8_t *video_framebuffer(void); /* LCD_WIDTH * LCD_HEIGHT shades, 0 (lightest) to 3 (darkest) */
+const uint8_t *video_framebuffer(void); /* DMG: LCD_WIDTH * LCD_HEIGHT shades, 0 (lightest) to 3 (darkest) */
+const uint16_t *video_colors(void);     /* CGB: LCD_WIDTH * LCD_HEIGHT colors, 5 bits each of red (low), green, blue */
 uint32_t video_frames(void);            /* frames finished so far; one more each time VBlank starts */
 
 /* audio.c */
@@ -159,8 +188,11 @@ const int16_t *audio_samples(unsigned int *); /* the samples (left, right) made 
 enum {
   VRAM_START = 0x8000,
   VRAM_SIZE = 0x2000,
+  VRAM_BANKS = 2, /* CGB */
   WRAM_START = 0xC000,
   WRAM_SIZE = 0x2000,
+  WRAM_BANK_SIZE = 0x1000, /* C000-CFFF is bank 0; D000-DFFF bank 1, or on a CGB, any of banks 1-7 */
+  WRAM_BANKS = 8,
   ECHO_START = 0xE000, /* mirror of WRAM */
   OAM_START = 0xFE00,
   OAM_SIZE = 0xA0,
@@ -170,6 +202,7 @@ enum {
 
 int mem_alloc(void);
 void mem_free(void);
+void mem_wram_bank(uint8_t); /* CGB: the bank at D000-DFFF */
 
 extern uint8_t *oam;
 extern uint8_t *vram;
@@ -248,6 +281,8 @@ extern uint8_t ime;
 extern uint8_t ei_delay;
 extern uint8_t halted;
 extern uint8_t halt_bug;
+extern uint8_t stopped;
+extern uint8_t double_speed; /* CGB */
 extern uint8_t cpu_locked;
 
 void cpu_bios_init(void);

@@ -44,12 +44,15 @@ static uint8_t *hram;
 uint8_t *oam;
 uint8_t *vram;
 
+/* where D000-DFFF is in wram: bank 1, unless a CGB picks another */
+static unsigned int wram_bank_offset = WRAM_BANK_SIZE;
+
 int mem_alloc(void) {
-  /* 8 kB Working Ram */
-  wram = calloc(1, WRAM_SIZE);
+  /* 8 kB of work RAM (32 kB on a CGB), 8 kB of video RAM (16 kB) */
+  wram = calloc(WRAM_BANKS, WRAM_BANK_SIZE);
   hram = calloc(1, HRAM_SIZE);
   oam = calloc(1, OAM_SIZE);
-  vram = calloc(1, VRAM_SIZE);
+  vram = calloc(VRAM_BANKS, VRAM_SIZE);
   if (wram == NULL || hram == NULL || oam == NULL || vram == NULL) {
     mem_free();
     return 0;
@@ -63,6 +66,13 @@ void mem_free(void) {
   free(hram);
   free(wram);
   vram = oam = hram = wram = NULL;
+}
+
+void mem_wram_bank(uint8_t bank) {
+  if (bank == 0) {
+    bank = 1;
+  }
+  wram_bank_offset = bank * WRAM_BANK_SIZE;
 }
 
 /* ************************************************************** */
@@ -125,7 +135,12 @@ static const read_f fxxx_readmap[16] = {
     cpu_read,
 };
 
-uint8_t wram_read(uint16_t address) { return wram[address - WRAM_START]; }
+uint8_t wram_read(uint16_t address) {
+  if (address < WRAM_START + WRAM_BANK_SIZE) {
+    return wram[address - WRAM_START];
+  }
+  return wram[wram_bank_offset + address - (WRAM_START + WRAM_BANK_SIZE)];
+}
 
 uint8_t wrame_read(uint16_t address) { return wram_read(address - (ECHO_START - WRAM_START)); }
 
@@ -218,7 +233,13 @@ static const write_f fxxx_writemap[16] = {
     cpu_write,
 };
 
-void wram_write(uint16_t address, uint8_t value) { wram[address - WRAM_START] = value; }
+void wram_write(uint16_t address, uint8_t value) {
+  if (address < WRAM_START + WRAM_BANK_SIZE) {
+    wram[address - WRAM_START] = value;
+  } else {
+    wram[wram_bank_offset + address - (WRAM_START + WRAM_BANK_SIZE)] = value;
+  }
+}
 
 void wrame_write(uint16_t address, uint8_t value) { wram_write(address - (ECHO_START - WRAM_START), value); }
 

@@ -30,8 +30,10 @@ uint64_t cycle_counter = 0;
 uint8_t ime = 0;      /* interrupt master enable */
 uint8_t ei_delay = 0; /* EI takes effect after the following instruction */
 uint8_t halted = 0;
-uint8_t halt_bug = 0;   /* PC won't move past the next opcode (see HALT) */
-uint8_t cpu_locked = 0; /* an illegal opcode hangs the real CPU */
+uint8_t halt_bug = 0;     /* PC won't move past the next opcode (see HALT) */
+uint8_t stopped = 0;      /* by STOP, until a button is pressed */
+uint8_t double_speed = 0; /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
+uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
 
 void NOP(void) {}
 
@@ -173,24 +175,36 @@ static void cpu_interrupt(void) {
   if (!ime) {
     return;
   }
-  /* the lowest set bit wins */
-  uint8_t n = 0;
-  while (!(pending & (1 << n))) {
-    ++n;
-  }
   ime = 0;
-  IO_REG(IO_IF) &= ~(1 << n);
   if (halt_bug) {
     /* EI then HALT with an interrupt pending: it returns to the HALT, which runs again */
     halt_bug = 0;
     --r.PC;
   }
-  push16_ext(r.PC);
-  r.PC = interrupt_vector[n];
+  /* PC's high byte is pushed first, and can land on IE (with SP at 0000); only then is the interrupt picked, so it */
+  /* can be another one, or none at all, which leaves PC at 0000. */
+  mem_write(--r.SP, r.PC >> 8);
+  pending = IO_REG(IO_IF) & io_ie & INT_ALL;
+  mem_write(--r.SP, r.PC & 0xFF);
+  r.PC = 0x0000;
+  if (pending) {
+    /* the lowest set bit wins */
+    uint8_t n = 0;
+    while (!(pending & (1 << n))) {
+      ++n;
+    }
+    IO_REG(IO_IF) &= ~(1 << n);
+    r.PC = interrupt_vector[n];
+  }
   cycle_counter += 5 << M_CYCLE_SHL;
 }
 
 uint32_t step(void) {
+  if (stopped) {
+    /* nothing runs, but time passes */
+    cycle_counter += M_CYCLE;
+    return M_CYCLE;
+  }
   uint64_t start = cycle_counter;
   cpu_interrupt();
   if (halted) {
@@ -215,6 +229,8 @@ uint32_t step(void) {
 
   uint32_t cycles = (uint32_t)(cycle_counter - start);
   io_tick(cycles);
+  /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
+  cycles >>= double_speed;
   audio_tick(cycles);
   if (!doctor) {
     video_tick(cycles);
@@ -247,15 +263,29 @@ void cpu_bios_init(void) {
   r.BC = 0x13;
   r.DE = 0xD8;
   r.HL = 0x14D;
+  if (model == MODEL_CGB) {
+    r.A = 0x11;
+    r.F = 0x80;
+    r.BC = 0x0000;
+    r.DE = 0xFF56;
+    r.HL = 0x000D;
+  } else if (model == MODEL_CGB_DMG) {
+    r.A = 0x11;
+    r.F = 0x80;
+    r.BC = 0x0000;
+    r.DE = 0x0008;
+    r.HL = 0x007C;
+  }
   r.PC = 0x100;
   r.SP = 0xFFFE;
-  ime = ei_delay = halted = halt_bug = cpu_locked = 0;
+  ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
 
   mem_write(0xFF05, 0x00);  // TIMA
   mem_write(0xFF06, 0x00);  // TMA
   mem_write(0xFF07, 0x00);  // TAC
   mem_write(0xFF0F, 0xE1);  // IF
   audio_bios_init();        // NR10-NR52: writing them would trigger the channels
+  video_bios_init();        // the logo in VRAM
   mem_write(0xFF40, 0x91);  // LCDC
   mem_write(0xFF42, 0x00);  // SCY
   mem_write(0xFF43, 0x00);  // SCX

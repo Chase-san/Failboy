@@ -44,13 +44,22 @@ enum {
   EXIT_NO_RESULT = 3,
 };
 
-/* --dump writes an 8-bit greyscale PGM, with the DMG's four shades */
+/* --dump writes an 8-bit greyscale PGM, with the DMG's four shades, or on a CGB, a PPM */
 static const uint8_t dump_gray[4] = {0xFF, 0xAA, 0x55, 0x00};
+
+/* a CGB color's 5-bit components (red lowest), widened to 8 for the PPM */
+enum {
+  COMPONENTS = 3,
+  COMPONENT_BITS = 5,
+  COMPONENT_MASK = 0x1F,
+  WIDEN_SHIFT = 8 - COMPONENT_BITS, /* and its top bits repeated below */
+};
 
 static const char SAVE_EXTENSION[] = ".sav";
 static const char RTC_EXTENSION[] = ".rtc";
 
 int doctor = 0;
+int model = MODEL_DMG;
 
 /* Release builds on Windows are windowed programs with no console of their own. When one is started from a */
 /* terminal, borrow that terminal for anything not already redirected, so usage, errors and --headless output show. */
@@ -75,9 +84,12 @@ static int usage(const char *name) {
   fprintf(stderr, "  --rslcd      start with the really shitty LCD (L toggles it)\n");
   fprintf(stderr, "  --headless   run without a window (implied by the options below)\n");
 #endif
+  fprintf(stderr, "  --gb         run as an original Game Boy, even a color game\n");
+  fprintf(stderr, "  --gbc        run as a Game Boy Color, even an original Game Boy game\n");
+  fprintf(stderr, "               (without either, as whatever the game's header says it's for)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
-  fprintf(stderr, "  --dump FILE  save the last frame as a PGM image\n");
+  fprintf(stderr, "  --dump FILE  save the last frame as a PGM image (a PPM for a Game Boy Color)\n");
   fprintf(stderr, "  --seconds N  stop after N emulated seconds (headless default %d)\n", DEFAULT_SECONDS);
   fprintf(stderr, "  --save FILE  keep the cartridge's battery save in FILE (default: the ROM's name, ending %s);\n",
           SAVE_EXTENSION);
@@ -93,10 +105,21 @@ static int dump_frame(const char *filename) {
     fprintf(stderr, "failboy: can't write '%s'\n", filename);
     return 0;
   }
-  const uint8_t *frame = video_framebuffer();
-  fprintf(f, "P5\n%d %d\n255\n", LCD_WIDTH, LCD_HEIGHT);
-  for (int i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
-    fputc(dump_gray[frame[i]], f);
+  if (model == MODEL_DMG) {
+    const uint8_t *frame = video_framebuffer();
+    fprintf(f, "P5\n%d %d\n255\n", LCD_WIDTH, LCD_HEIGHT);
+    for (int i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
+      fputc(dump_gray[frame[i]], f);
+    }
+  } else {
+    const uint16_t *frame = video_colors();
+    fprintf(f, "P6\n%d %d\n255\n", LCD_WIDTH, LCD_HEIGHT);
+    for (int i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
+      for (int component = 0; component < COMPONENTS; ++component) {
+        uint8_t c = (frame[i] >> (component * COMPONENT_BITS)) & COMPONENT_MASK;
+        fputc(c << WIDEN_SHIFT | c >> (COMPONENT_BITS - WIDEN_SHIFT), f);
+      }
+    }
   }
   if (fclose(f) != 0) {
     fprintf(stderr, "failboy: can't write '%s'\n", filename);
@@ -106,9 +129,10 @@ static int dump_frame(const char *filename) {
 }
 
 static void run_headless(uint64_t limit, unsigned long frames) {
-  while (!cpu_locked && cycle_counter < limit) {
+  uint64_t elapsed = 0; /* T-cycles at the normal speed */
+  while (!cpu_locked && elapsed < limit) {
     uint16_t pc = r.PC;
-    step();
+    elapsed += step();
     if (frames) {
       if (video_frames() >= frames) {
         break;
@@ -206,6 +230,8 @@ int main(int argc, char *argv[]) {
   unsigned long frames = 0;
   int headless = 1;
   int rslcd = 0;
+  int gb = 0;
+  int gbc = 0;
 #ifdef FAILBOY_SDL
   headless = 0;
 #endif
@@ -218,6 +244,12 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[i], "--rslcd") == 0) {
       rslcd = 1;
 #endif
+    } else if (strcmp(argv[i], "--gb") == 0) {
+      gb = 1;
+      gbc = 0;
+    } else if (strcmp(argv[i], "--gbc") == 0) {
+      gbc = 1;
+      gb = 0;
     } else if (strcmp(argv[i], "--doctor") == 0) {
       doctor = 1;
       headless = 1;
@@ -250,6 +282,15 @@ int main(int argc, char *argv[]) {
 
   if (!cart_load(filename)) {
     return EXIT_ERROR;
+  }
+  /* Gameboy Doctor's logs start from the DMG's registers */
+  if (doctor && !gbc) {
+    gb = 1;
+  }
+  if (cart_cgb() && !gb) {
+    model = MODEL_CGB;
+  } else if (gbc) {
+    model = MODEL_CGB_DMG;
   }
   if (!mem_alloc()) {
     fprintf(stderr, "failboy: out of memory\n");

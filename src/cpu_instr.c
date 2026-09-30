@@ -231,8 +231,6 @@ static force_inline void PUSH16(uint16_t n) {
   mem_write16(r.SP, n);
 }
 
-void push16_ext(uint16_t n) { PUSH16(n); }
-
 void PUSH_AF(void) { PUSH16(r.AF); }
 
 void PUSH_BC(void) { PUSH16(r.BC); }
@@ -787,11 +785,25 @@ void HALT(void) {
   halted = 1; /* until an interrupt is pending (see step) */
 }
 
-void STOP(void) { rpc8(); /* 10 00: skip the second byte (stopping the clock isn't emulated) */ }
+void STOP(void) {
+  rpc8(); /* 10 00: the second byte is skipped */
+  if (io_speed_switch()) {
+    return;
+  }
+  /* The clock stops, and with it DIV (reset), the PPU and the screen, until a button is pressed (see io_joypad). */
+  stopped = 1;
+  mem_write(IO_DIV, 0);
+  video_stop();
+}
 
 void DI(void) { ime = ei_delay = 0; }
 
-void EI(void) { ei_delay = 2; /* IME turns on after the next instruction */ }
+void EI(void) {
+  /* IME turns on after the next instruction; a second EI before then doesn't put it off */
+  if (!ime && !ei_delay) {
+    ei_delay = 2;
+  }
+}
 
 /* **************************************** */
 /* Return */

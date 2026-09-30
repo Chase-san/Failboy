@@ -16,7 +16,7 @@
 /* SDL3 front end: a window showing each finished frame, the APU's samples on the default audio device, and the */
 /* keyboard as a joypad. */
 /*   arrows = D-pad, X = A, Z = B, Enter = Start, Backspace = Select, Esc = quit */
-/*   L = RSLCD on/off */
+/*   L = RSLCD on/off (running as an original Game Boy) */
 
 #include "sdl/frontend.h"
 
@@ -50,6 +50,16 @@ static const uint32_t shade_rgb[4] = {
     0x081820,
 };
 
+/* a CGB color's 5-bit components (red lowest), widened to XRGB8888's 8 */
+enum {
+  COMPONENTS = 3,
+  COMPONENT_BITS = 5,
+  COMPONENT_MASK = 0x1F,
+  XRGB_BITS = 8,
+  WIDEN_SHIFT = XRGB_BITS - COMPONENT_BITS, /* and its top bits repeated below */
+  RED_SHIFT = 2 * XRGB_BITS,                /* then green, and blue lowest */
+};
+
 static const struct {
   SDL_Scancode key;
   uint8_t button;
@@ -80,13 +90,23 @@ static uint8_t read_buttons(void) {
 }
 
 /* Runs until the PPU finishes a frame, but no longer than a frame's worth, so the window stays live while the LCD */
-/* is off. */
-static void run_frame(void) {
+/* is off. Returns the T-cycles it ran. */
+static uint32_t run_frame(void) {
   uint32_t frame = video_frames();
   uint32_t cycles = 0;
   while (!cpu_locked && video_frames() == frame && cycles < FRAME_CYCLES) {
     cycles += step();
   }
+  return cycles;
+}
+
+static uint32_t rgb(uint16_t color) {
+  uint32_t xrgb = 0;
+  for (int component = 0; component < COMPONENTS; ++component) {
+    uint32_t c = (color >> (component * COMPONENT_BITS)) & COMPONENT_MASK;
+    xrgb |= (c << WIDEN_SHIFT | c >> (COMPONENT_BITS - WIDEN_SHIFT)) << (RED_SHIFT - component * XRGB_BITS);
+  }
+  return xrgb;
 }
 
 /* SDL converts the APU's samples for the audio device. Returns NULL, and we carry on without sound, if it can't. */
@@ -148,6 +168,9 @@ static int handle_key(struct screen *screen, SDL_Scancode key) {
     case SDL_SCANCODE_ESCAPE:
       return 0;
     case SDL_SCANCODE_L:
+      if (model != MODEL_DMG) {
+        return 1; /* RSLCD is the DMG's screen */
+      }
       screen->rslcd = !screen->rslcd;
       if (screen->rslcd) {
         rslcd_reset(video_framebuffer());
@@ -164,10 +187,15 @@ static void draw_plain(struct screen *screen) {
   int pitch;
   if (SDL_LockTexture(screen->plain, NULL, &pixels, &pitch)) {
     const uint8_t *frame = video_framebuffer();
+    const uint16_t *colors = video_colors();
     for (int y = 0; y < LCD_HEIGHT; ++y) {
       uint32_t *row = (uint32_t *)((uint8_t *)pixels + y * pitch);
       for (int x = 0; x < LCD_WIDTH; ++x) {
-        row[x] = shade_rgb[frame[y * LCD_WIDTH + x]];
+        if (model == MODEL_DMG) {
+          row[x] = shade_rgb[frame[y * LCD_WIDTH + x]];
+        } else {
+          row[x] = rgb(colors[y * LCD_WIDTH + x]);
+        }
       }
     }
     SDL_UnlockTexture(screen->plain);
@@ -221,7 +249,7 @@ static void draw_rslcd(struct screen *screen) {
 
 int frontend_run(uint64_t cycle_limit, int rslcd) {
   struct screen screen = {0};
-  screen.rslcd = rslcd;
+  screen.rslcd = rslcd && model == MODEL_DMG;
 
   /* main() is ours, not SDL_main's */
   SDL_SetMainReady();
@@ -249,8 +277,9 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
   /* a frame lasts 70224 T-cycles at 4.19 MHz, about 16.74 ms (59.73 Hz) */
   const uint64_t frame_ns = (uint64_t)FRAME_CYCLES * SDL_NS_PER_SECOND / CLOCK_HZ;
   uint64_t next = SDL_GetTicksNS();
+  uint64_t elapsed = 0; /* T-cycles at the normal speed */
   int running = 1;
-  while (running && cycle_counter < cycle_limit) {
+  while (running && elapsed < cycle_limit) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT) {
@@ -260,7 +289,7 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
       }
     }
     io_joypad(read_buttons());
-    run_frame();
+    elapsed += run_frame();
     play_audio(audio);
     if (screen.rslcd) {
       draw_rslcd(&screen);

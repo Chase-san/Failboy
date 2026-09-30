@@ -23,7 +23,6 @@
 /* Operand fetch and stack helpers */
 uint8_t rpc8_ext(void);
 uint16_t rpc16_ext(void);
-void push16_ext(uint16_t);
 
 /* 8-bit Loads */
 void LD_A_n(void);

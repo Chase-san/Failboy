@@ -69,6 +69,7 @@ enum {
   PAN_LEFT = 0x10, /* NR51, channel 1's bits */
   PAN_RIGHT = 0x01,
   NR52_POWER = 0x80,
+  PCM_HIGH_SHIFT = 4, /* PCM12/PCM34: the second channel's output is the high nibble */
 };
 
 enum {
@@ -339,6 +340,9 @@ static void set_power(int on) {
     }
     for (int ch = 0; ch < CHANNELS; ++ch) {
       channels[ch].on = 0;
+      if (model != MODEL_DMG) {
+        channels[ch].length = 0;
+      }
     }
     IO_REG(NR52) = 0;
     return;
@@ -514,6 +518,12 @@ void audio_sequencer_clock(void) {
 }
 
 uint8_t audio_read(uint16_t address) {
+  if (address == IO_PCM12 || address == IO_PCM34) {
+    /* CGB: the digital outputs of channels 1 and 2, or 3 and 4, a nibble each */
+    int ch = (address - IO_PCM12) * 2;
+    catch_up();
+    return output(ch) | output(ch + 1) << PCM_HIGH_SHIFT;
+  }
   if (address >= WAVE_RAM) {
     return IO_REG(address);
   }
@@ -528,6 +538,9 @@ uint8_t audio_read(uint16_t address) {
 
 void audio_write(uint16_t address, uint8_t value) {
   int ch = (address - NR10) / CHANNEL_REGISTERS;
+  if (address > AUDIO_END) {
+    return; /* PCM12 and PCM34 are read-only */
+  }
   catch_up();
   levels_stale = 1;
   if (address >= WAVE_RAM) {
@@ -542,7 +555,8 @@ void audio_write(uint16_t address, uint8_t value) {
     return;
   }
   if (!(IO_REG(NR52) & NR52_POWER)) {
-    if (address == NR11 || address == NR21 || address == NR31 || address == NR41) {
+    /* while it's off, the DMG's length counters can still be written */
+    if (model == MODEL_DMG && (address == NR11 || address == NR21 || address == NR31 || address == NR41)) {
       load_length(ch, value);
     }
     return;

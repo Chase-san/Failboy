@@ -29,13 +29,20 @@ enum {
   SC_TRANSFER = 0x80, /* start / in progress */
   SC_INTERNAL_CLOCK = 0x01,
   SB_NO_PARTNER = 0xFF, /* the line idles high, so a lone Game Boy receives all 1s */
-  SERIAL_CYCLES = 4096, /* 8 bits at 8192 Hz */
+  SERIAL_BITS = 8,
   TAC_ENABLE = 0x04,
   TAC_CLOCK = 0x03,
-  DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz */
-  DIV_AFTER_BOOT = 0xABCC,    /* where the DMG's boot ROM leaves the divider */
-  IO_CGB_START = 0xFF4C,      /* FF4C-FF7F: the CGB's registers, with nothing behind them on the DMG */
-  OPEN_BUS = 0xFF,            /* reading nothing: the data bus floats high */
+  DIV_SERIAL_BIT = 0x0100,    /* the internal serial clock shifts a bit on its falling edges: 8192 Hz */
+  DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
+  DIV_RARE_BITS = DIV_SERIAL_BIT | DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* any of those */
+  DIV_AFTER_BOOT = 0xABCC, /* where the DMG's boot ROM leaves the divider */
+  IO_CGB_START = 0xFF4C,   /* FF4C-FF7F: the CGB's registers, with nothing behind them on the DMG */
+  OPEN_BUS = 0xFF,         /* reading nothing: the data bus floats high */
+  KEY1_SWITCH = 0x01,      /* armed for STOP to switch speed */
+  KEY1_DOUBLE = 0x80,
+  KEY1_UNUSED = 0x7E,
+  SVBK_BANK = 0x07,
+  SVBK_UNUSED = 0xF8,
 };
 
 /* FF00-FF0F: the bits that read back as 1, being unused, or in registers with nothing behind them */
@@ -52,8 +59,8 @@ static uint16_t div_counter = DIV_AFTER_BOOT;
 /* TAC selects which divider bit TIMA counts the falling edges of: 4096, 262144, 65536, 16384 Hz */
 static const uint8_t tac_bit[4] = {9, 3, 5, 7};
 
-/* T-cycles left in the current serial transfer */
-static uint16_t serial_timer = 0;
+/* bits left to shift in the current serial transfer */
+static uint8_t serial_bits = 0;
 
 /* The last few characters sent over serial, to spot Blargg's "Passed"/"Failed". */
 static char serial_tail[6];
@@ -65,9 +72,10 @@ static uint8_t joypad = 0;
 void io_request(uint8_t mask) { IO_REG(IO_IF) |= mask; }
 
 void io_joypad(uint8_t pressed) {
-  /* a press pulls an input line low, which is what requests the interrupt */
+  /* a press pulls an input line low, which is what requests the interrupt, and ends STOP */
   if (pressed & ~joypad) {
     io_request(INT_JOYPAD);
+    stopped = 0;
   }
   joypad = pressed;
 }
@@ -84,10 +92,25 @@ static uint8_t joypad_read(void) {
   return P1_UNUSED | select | (~pressed & P1_INPUTS);
 }
 
-/* The PPU's registers; DMA sits in the middle of them but stays here. */
-static int is_video_register(uint16_t address) { return address >= IO_LCDC && address <= IO_WX && address != IO_DMA; }
+/* The PPU's registers; DMA sits in the middle of them but stays here. A CGB game has more. */
+static int is_video_register(uint16_t address) {
+  if (address >= IO_LCDC && address <= IO_WX) {
+    return address != IO_DMA;
+  }
+  if (model != MODEL_CGB) {
+    return 0;
+  }
+  return address == IO_VBK || (address >= IO_HDMA1 && address <= IO_HDMA5) ||
+         (address >= IO_BCPS && address <= IO_OPRI);
+}
 
-static int is_audio_register(uint16_t address) { return address >= AUDIO_START && address <= AUDIO_END; }
+/* sound, and the CGB's PCM12/PCM34 */
+static int is_audio_register(uint16_t address) {
+  if (address >= AUDIO_START && address <= AUDIO_END) {
+    return 1;
+  }
+  return model != MODEL_DMG && (address == IO_PCM12 || address == IO_PCM34);
+}
 
 static int timer_signal(void) {
   uint8_t tac = IO_REG(IO_TAC);
@@ -104,31 +127,48 @@ static void timer_update(int before) {
   }
 }
 
-/* Moves the divider, which clocks TIMA and the APU's frame sequencer off falling edges of its bits. */
+static void serial_shift(void) {
+  if (serial_bits && --serial_bits == 0) {
+    IO_REG(IO_SB) = SB_NO_PARTNER;
+    IO_REG(IO_SC) &= ~SC_TRANSFER;
+    if (!doctor) {
+      io_request(INT_SERIAL);
+    }
+  }
+}
+
+/* Moves the divider, which clocks TIMA, the serial port and the APU's frame sequencer off falling edges of its bits. */
 static void div_set(uint16_t value) {
   int before = timer_signal();
   uint16_t fallen = div_counter & ~value;
   div_counter = value;
   timer_update(before);
-  if (fallen & DIV_SEQUENCER_BIT) {
+  if (!(fallen & DIV_RARE_BITS)) {
+    return;
+  }
+  if (fallen & DIV_SERIAL_BIT) {
+    serial_shift();
+  }
+  /* the sequencer keeps to 512 Hz in double speed */
+  if (fallen & (DIV_SEQUENCER_BIT << double_speed)) {
     audio_sequencer_clock();
   }
+}
+
+/* CGB: STOP switches speed, if KEY1 is armed for it; returns whether it did */
+int io_speed_switch(void) {
+  if (model != MODEL_CGB || !(IO_REG(IO_KEY1) & KEY1_SWITCH)) {
+    return 0;
+  }
+  double_speed = !double_speed;
+  IO_REG(IO_KEY1) = 0;
+  div_set(0);
+  return 1;
 }
 
 void io_tick(uint32_t cycles) {
   for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
     div_set(div_counter + M_CYCLE);
-
-    if (serial_timer) {
-      serial_timer -= M_CYCLE;
-      if (!serial_timer) {
-        IO_REG(IO_SB) = SB_NO_PARTNER;
-        IO_REG(IO_SC) &= ~SC_TRANSFER;
-        if (!doctor) {
-          io_request(INT_SERIAL);
-        }
-      }
-    }
   }
 }
 
@@ -172,6 +212,16 @@ uint8_t io_read(uint16_t address) {
       return IO_REG(IO_IF) | unused_bits[IO_IF - IO_P1];
     case IO_DMA:
       return IO_REG(IO_DMA);
+    case IO_KEY1:
+      if (model != MODEL_CGB) {
+        return OPEN_BUS;
+      }
+      return KEY1_UNUSED | (double_speed * KEY1_DOUBLE) | IO_REG(IO_KEY1);
+    case IO_SVBK:
+      if (model != MODEL_CGB) {
+        return OPEN_BUS;
+      }
+      return SVBK_UNUSED | IO_REG(IO_SVBK);
     case IO_IE:
       return io_ie;
     default:
@@ -184,6 +234,7 @@ uint8_t io_read(uint16_t address) {
 
 void io_write(uint16_t address, uint8_t value) {
   int before;
+  uint16_t source;
   if (is_video_register(address)) {
     video_write(address, value);
     return;
@@ -198,7 +249,7 @@ void io_write(uint16_t address, uint8_t value) {
       /* link cable for console ! :D */
       if ((value & SC_TRANSFER) && (value & SC_INTERNAL_CLOCK)) {
         serial_out(IO_REG(IO_SB));
-        serial_timer = SERIAL_CYCLES;
+        serial_bits = SERIAL_BITS;
       }
       break;
     case IO_DIV:
@@ -213,10 +264,23 @@ void io_write(uint16_t address, uint8_t value) {
       IO_REG(IO_IF) = value & INT_ALL;
       break;
     case IO_DMA:
-      /* OAM DMA, done all at once */
+      /* OAM DMA, done all at once; from E000 up it reads work RAM, as echo RAM does */
       IO_REG(IO_DMA) = value;
+      source = value << 8;
+      if (source >= ECHO_START) {
+        source -= ECHO_START - WRAM_START;
+      }
       for (uint16_t i = 0; i < OAM_SIZE; ++i) {
-        oam[i] = mem_read((value << 8) | i);
+        oam[i] = mem_read(source + i);
+      }
+      break;
+    case IO_KEY1:
+      IO_REG(IO_KEY1) = value & KEY1_SWITCH;
+      break;
+    case IO_SVBK:
+      if (model == MODEL_CGB) {
+        IO_REG(IO_SVBK) = value & SVBK_BANK;
+        mem_wram_bank(value & SVBK_BANK);
       }
       break;
     case IO_IE:

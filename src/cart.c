@@ -50,6 +50,8 @@ enum {
 };
 
 enum {
+  HEADER_CGB = 0x143,
+  HEADER_CGB_GAME = 0x80, /* in HEADER_CGB: a color game (0xC0 if only for the CGB) */
   HEADER_CART_TYPE = 0x147,
   HEADER_RAM_SIZE = 0x149,
   ROM_BANK_SIZE = 0x4000,
@@ -78,11 +80,11 @@ enum {
 
 /* MBC3, and the MBC30 (8-bit ROM bank, 8 RAM banks): 4000-5fff picks a RAM bank or one of the clock's registers */
 enum {
-  MBC3_RAM_BANK_MASK = 0x07,
+  MBC3_BANK_MASK = 0x0F, /* 4 bits: RAM banks, then the clock's registers, with nothing at the rest */
+  MBC3_RAM_BANKS = 4,
+  MBC30_RAM_BANKS = 8,
   MBC3_RTC_FIRST = 0x08,
   MBC3_RTC_LAST = 0x0C,
-  MBC3_LATCH_ARM = 0x00, /* writing 0 and then 1 to 6000-7fff latches the clock */
-  MBC3_LATCH = 0x01,
 };
 
 /* MBC5: a 9-bit ROM bank, where bank 0 is allowed */
@@ -104,7 +106,6 @@ static uint8_t cart_mode = MODE_MODELESS;
 static unsigned int rom_bank = 1; /* 2000-3fff (MBC1: its low 5 bits) */
 static uint8_t ram_bank = 0; /* 4000-5fff: RAM bank; MBC1: or bits 5-6 of the ROM bank; MBC3: or a clock register */
 static uint8_t ram_enabled = 0;
-static uint8_t latch_armed = 0; /* MBC3: 0 was just written to 6000-7fff */
 static uint8_t rumble = 0;
 static uint8_t battery = 0; /* the RAM keeps its contents with the power off */
 static uint8_t rtc = 0;     /* MBC3 with a clock */
@@ -286,16 +287,25 @@ void mbc3_0_write(uint16_t address, uint8_t value) {
 void mbc3_1_write(uint16_t address, uint8_t value) {
   /* 4000-7fff */
   if (address < UPPER_START) {
-    ram_bank = value;
-  } else {
-    if (rtc && latch_armed && value == MBC3_LATCH) {
-      rtc_latch();
-    }
-    latch_armed = value == MBC3_LATCH_ARM;
+    ram_bank = value & MBC3_BANK_MASK;
+  } else if (rtc) {
+    /* Games write 0 and then 1 to latch the clock, as documented, but any write does it. */
+    rtc_latch();
   }
 }
 
 static int mbc3_clock_selected(void) { return ram_bank >= MBC3_RTC_FIRST; }
+
+/* the selected RAM bank has RAM behind it: the MBC3 maps 4 banks, the MBC30 (with more RAM) 8 */
+static int mbc3_ram_selected(void) {
+  if (ram == NULL) {
+    return 0;
+  }
+  if (ram_size > MBC3_RAM_BANKS * RAM_BANK_SIZE) {
+    return ram_bank < MBC30_RAM_BANKS;
+  }
+  return ram_bank < MBC3_RAM_BANKS;
+}
 
 uint8_t mbc3_2_read(uint16_t address) {
   /* a000-bfff: a RAM bank or a clock register */
@@ -308,10 +318,10 @@ uint8_t mbc3_2_read(uint16_t address) {
     }
     return OPEN_BUS;
   }
-  if (ram == NULL) {
+  if (!mbc3_ram_selected()) {
     return OPEN_BUS;
   }
-  return *ram_at(ram_bank & MBC3_RAM_BANK_MASK, address);
+  return *ram_at(ram_bank, address);
 }
 
 void mbc3_2_write(uint16_t address, uint8_t value) {
@@ -324,8 +334,8 @@ void mbc3_2_write(uint16_t address, uint8_t value) {
     }
     return;
   }
-  if (ram != NULL) {
-    *ram_at(ram_bank & MBC3_RAM_BANK_MASK, address) = value;
+  if (mbc3_ram_selected()) {
+    *ram_at(ram_bank, address) = value;
   }
 }
 
@@ -363,7 +373,6 @@ void cart_mem_reset(void) {
   rom_bank = 1;
   ram_bank = 0;
   ram_enabled = 0;
-  latch_armed = 0;
   rumble = 0;
   battery = 0;
   rtc = 0;
@@ -501,6 +510,8 @@ int cart_load(const char *filename) {
   }
   return 1;
 }
+
+int cart_cgb(void) { return (rom[HEADER_CGB] & HEADER_CGB_GAME) != 0; }
 
 unsigned int cart_battery_ram_size(void) {
   if (!battery) {
