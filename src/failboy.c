@@ -48,6 +48,7 @@ enum {
 static const uint8_t dump_gray[4] = {0xFF, 0xAA, 0x55, 0x00};
 
 static const char SAVE_EXTENSION[] = ".sav";
+static const char RTC_EXTENSION[] = ".rtc";
 
 int doctor = 0;
 
@@ -78,8 +79,9 @@ static int usage(const char *name) {
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image\n");
   fprintf(stderr, "  --seconds N  stop after N emulated seconds (headless default %d)\n", DEFAULT_SECONDS);
-  fprintf(stderr, "  --save FILE  keep the cartridge's battery save in FILE (default: the ROM's name, ending %s)\n",
+  fprintf(stderr, "  --save FILE  keep the cartridge's battery save in FILE (default: the ROM's name, ending %s);\n",
           SAVE_EXTENSION);
+  fprintf(stderr, "               a cartridge clock is kept beside it, ending %s\n", RTC_EXTENSION);
   fprintf(stderr, "exit status: %d passed, %d failed, %d error, %d no result\n", EXIT_PASSED, EXIT_FAILED, EXIT_ERROR,
           EXIT_NO_RESULT);
   return EXIT_ERROR;
@@ -122,30 +124,31 @@ static void run_headless(uint64_t limit, unsigned long frames) {
   fflush(stdout);
 }
 
-/* rom.gb -> rom.sav, next to the ROM */
-static char *save_path_for(const char *rom) {
-  const char *name = rom;
-  for (const char *p = rom; *p != '\0'; ++p) {
+/* path with a different extension: rom.gb -> rom.sav, rom.sav -> rom.rtc */
+static char *with_extension(const char *path, const char *extension) {
+  const char *name = path;
+  for (const char *p = path; *p != '\0'; ++p) {
     if (*p == '/' || *p == '\\') {
       name = p + 1;
     }
   }
-  size_t length = strlen(rom);
+  size_t length = strlen(path);
   const char *dot = strrchr(name, '.');
   if (dot != NULL && dot != name) {
-    length = dot - rom;
+    length = dot - path;
   }
-  char *path = malloc(length + sizeof(SAVE_EXTENSION));
-  if (path != NULL) {
-    memcpy(path, rom, length);
-    memcpy(path + length, SAVE_EXTENSION, sizeof(SAVE_EXTENSION));
+  size_t extension_size = strlen(extension) + 1;
+  char *result = malloc(length + extension_size);
+  if (result != NULL) {
+    memcpy(result, path, length);
+    memcpy(result + length, extension, extension_size);
   }
-  return path;
+  return result;
 }
 
-/* Loads the battery RAM from a save, if there is one. Returns 0 if there's one that can't be read, which then */
-/* mustn't be saved over. */
-static int load_battery(const char *path) {
+/* Loads saved state (battery RAM or the clock) into the cartridge, if there is any. Returns 0 if there's a save that */
+/* can't be read, which then mustn't be saved over. */
+static int load_state(const char *path, void (*restore)(const uint8_t *, unsigned int)) {
   FILE *f = fopen(path, "rb");
   if (f == NULL) {
     if (errno == ENOENT) {
@@ -166,17 +169,16 @@ static int load_battery(const char *path) {
     fprintf(stderr, "failboy: can't read the save file '%s', so it won't be saved over\n", path);
     return 0;
   }
-  cart_write_battery_ram(data, size);
+  restore(data, size);
   free(data);
   return 1;
 }
 
-static int save_battery(const char *path) {
-  unsigned int size = cart_battery_ram_size();
+static int save_state(const char *path, unsigned int size, void (*collect)(uint8_t *, unsigned int)) {
   uint8_t *data = malloc(size);
   int ok = data != NULL;
   if (ok) {
-    cart_read_battery_ram(data, size);
+    collect(data, size);
     ok = file_save(path, data, size);
   }
   if (!ok) {
@@ -256,18 +258,24 @@ int main(int argc, char *argv[]) {
   }
   cpu_bios_init();
 
-  /* Battery-backed cartridge RAM is loaded from its save now, and saved again on the way out. */
-  const char *save_file = NULL;
+  /* Battery-backed RAM and the MBC3's clock are loaded now and saved again on the way out: the save file is --save's */
+  /* or rom.sav next to the ROM, and the clock goes beside it with the same name, ending .rtc. */
+  const char *save_file = save_option;
   char *default_save = NULL;
-  if (cart_battery_ram_size() > 0) {
-    save_file = save_option;
-    if (save_file == NULL) {
-      default_save = save_path_for(filename);
-      save_file = default_save;
-    }
-    if (save_file != NULL && !load_battery(save_file)) {
-      save_file = NULL;
-    }
+  char *rtc_file = NULL;
+  if (save_file == NULL && (cart_battery_ram_size() > 0 || cart_has_rtc())) {
+    default_save = with_extension(filename, SAVE_EXTENSION);
+    save_file = default_save;
+  }
+  if (save_file != NULL && cart_has_rtc()) {
+    rtc_file = with_extension(save_file, RTC_EXTENSION);
+  }
+  if (cart_battery_ram_size() == 0 || (save_file != NULL && !load_state(save_file, cart_write_battery_ram))) {
+    save_file = NULL;
+  }
+  if (rtc_file != NULL && !load_state(rtc_file, cart_write_rtc)) {
+    free(rtc_file);
+    rtc_file = NULL;
   }
 
   int ok = 1;
@@ -284,10 +292,14 @@ int main(int argc, char *argv[]) {
     ok = run_window(limit, rslcd);
   }
 
-  if (save_file != NULL && !save_battery(save_file)) {
+  if (save_file != NULL && !save_state(save_file, cart_battery_ram_size(), cart_read_battery_ram)) {
+    ok = 0;
+  }
+  if (rtc_file != NULL && !save_state(rtc_file, CART_RTC_SIZE, cart_read_rtc)) {
     ok = 0;
   }
   free(default_save);
+  free(rtc_file);
 
   int result = io_serial_result();
   mem_free();

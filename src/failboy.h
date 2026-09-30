@@ -52,6 +52,15 @@ unsigned int cart_battery_ram_size(void);                   /* 0 unless the cart
 void cart_read_battery_ram(uint8_t *, unsigned int);        /* copies the battery RAM out, to save it */
 void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
 
+/* the MBC3's clock */
+enum {
+  CART_RTC_SIZE = 13, /* bytes of clock state, for cart_read_rtc() and cart_write_rtc() */
+};
+
+int cart_has_rtc(void);
+void cart_read_rtc(uint8_t *, unsigned int);        /* copies the clock's state out, to save it */
+void cart_write_rtc(const uint8_t *, unsigned int); /* restores a saved clock, which catches up on the time since */
+
 /* io.c */
 enum {
   IO_P1 = 0xFF00,
