@@ -30,6 +30,7 @@ uint64_t cycle_counter = 0;
 uint8_t ime = 0;      /* interrupt master enable */
 uint8_t ei_delay = 0; /* EI takes effect after the following instruction */
 uint8_t halted = 0;
+uint8_t halt_bug = 0;   /* PC won't move past the next opcode (see HALT) */
 uint8_t cpu_locked = 0; /* an illegal opcode hangs the real CPU */
 
 void NOP(void) {}
@@ -179,6 +180,11 @@ static void cpu_interrupt(void) {
   }
   ime = 0;
   IO_REG(IO_IF) &= ~(1 << n);
+  if (halt_bug) {
+    /* EI then HALT with an interrupt pending: it returns to the HALT, which runs again */
+    halt_bug = 0;
+    --r.PC;
+  }
   push16_ext(r.PC);
   r.PC = interrupt_vector[n];
   cycle_counter += 5 << M_CYCLE_SHL;
@@ -191,6 +197,11 @@ uint32_t step(void) {
     cycle_counter += M_CYCLE;
   } else {
     uint8_t op = rpc8_ext();
+    if (halt_bug) {
+      /* the byte after the HALT gets read again */
+      halt_bug = 0;
+      --r.PC;
+    }
     instr_map[op]();
     cycle_counter += instr_timing[op] << M_CYCLE_SHL;
     /* EI enables interrupts only after the instruction that follows it */
@@ -204,6 +215,7 @@ uint32_t step(void) {
 
   uint32_t cycles = (uint32_t)(cycle_counter - start);
   io_tick(cycles);
+  audio_tick(cycles);
   if (!doctor) {
     video_tick(cycles);
   }
@@ -237,30 +249,13 @@ void cpu_bios_init(void) {
   r.HL = 0x14D;
   r.PC = 0x100;
   r.SP = 0xFFFE;
-  ime = ei_delay = halted = cpu_locked = 0;
+  ime = ei_delay = halted = halt_bug = cpu_locked = 0;
 
   mem_write(0xFF05, 0x00);  // TIMA
   mem_write(0xFF06, 0x00);  // TMA
   mem_write(0xFF07, 0x00);  // TAC
   mem_write(0xFF0F, 0xE1);  // IF
-  mem_write(0xFF10, 0x80);  // NR10
-  mem_write(0xFF11, 0xBF);  // NR11
-  mem_write(0xFF12, 0xF3);  // NR12
-  mem_write(0xFF14, 0xBF);  // NR14
-  mem_write(0xFF16, 0x3F);  // NR21
-  mem_write(0xFF17, 0x00);  // NR22
-  mem_write(0xFF19, 0xBF);  // NR24
-  mem_write(0xFF1A, 0x7F);  // NR30
-  mem_write(0xFF1B, 0xFF);  // NR31
-  mem_write(0xFF1C, 0x9F);  // NR32
-  mem_write(0xFF1E, 0xBF);  // NR33
-  mem_write(0xFF20, 0xFF);  // NR41
-  mem_write(0xFF21, 0x00);  // NR42
-  mem_write(0xFF22, 0x00);  // NR43
-  mem_write(0xFF23, 0xBF);  // NR44
-  mem_write(0xFF24, 0x77);  // NR50
-  mem_write(0xFF25, 0xF3);  // NR51
-  mem_write(0xFF26, 0xF1);  // NR52 // 0xF1 GB, 0xF0 SGB
+  audio_bios_init();        // NR10-NR52: writing them would trigger the channels
   mem_write(0xFF40, 0x91);  // LCDC
   mem_write(0xFF42, 0x00);  // SCY
   mem_write(0xFF43, 0x00);  // SCX

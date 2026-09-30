@@ -13,7 +13,8 @@
  * GNU General Public License for more details.
  */
 
-/* SDL3 front end: a window showing each finished frame, and the keyboard as a joypad. */
+/* SDL3 front end: a window showing each finished frame, the APU's samples on the default audio device, and the */
+/* keyboard as a joypad. */
 /*   arrows = D-pad, X = A, Z = B, Enter = Start, Backspace = Select, Esc = quit */
 /*   L = RSLCD on/off */
 
@@ -32,7 +33,14 @@
 enum {
   WINDOW_SCALE = 4,
   MAX_LAG_FRAMES = 4, /* further behind than this (a dragged window, a debugger) and we stop trying to catch up */
+  AUDIO_CHANNELS = 2,
+  AUDIO_FRAME_BYTES = AUDIO_CHANNELS * sizeof(int16_t),
+  AUDIO_TARGET = AUDIO_RATE / 20,     /* sample frames to keep queued for the device: 50 ms */
+  AUDIO_MAX_QUEUE = AUDIO_TARGET * 4, /* further ahead than this, samples are dropped rather than add to the delay */
 };
+
+/* The most the playback rate is bent to hold the queue at AUDIO_TARGET: 0.5%, too little to hear. */
+static const float AUDIO_MAX_SKEW = 0.005f;
 
 /* XRGB8888 for shades 0 (lightest) to 3 */
 static const uint32_t shade_rgb[4] = {
@@ -79,6 +87,51 @@ static void run_frame(void) {
   while (!cpu_locked && video_frames() == frame && cycles < FRAME_CYCLES) {
     cycles += step();
   }
+}
+
+/* SDL converts the APU's samples for the audio device. Returns NULL, and we carry on without sound, if it can't. */
+static SDL_AudioStream *open_audio(void) {
+  const SDL_AudioSpec spec = {SDL_AUDIO_S16, AUDIO_CHANNELS, AUDIO_RATE};
+  SDL_AudioStream *stream = NULL;
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+  }
+  if (stream == NULL) {
+    fprintf(stderr, "failboy: no sound: %s\n", SDL_GetError());
+  }
+  return stream;
+}
+
+/* Queues the frame's samples. The device's clock never quite matches the one pacing the frames, so the playback */
+/* rate is bent slightly to hold the queue at AUDIO_TARGET, which also covers the device taking big bites of it. */
+static void play_audio(SDL_AudioStream *stream) {
+  unsigned int frames = 0;
+  const int16_t *samples = audio_samples(&frames);
+  if (stream == NULL) {
+    return;
+  }
+  int queued = SDL_GetAudioStreamQueued(stream) / AUDIO_FRAME_BYTES;
+  if (queued == 0) {
+    /* it ran dry (at the start, or after the window was dragged): wait for a full queue again before playing on */
+    SDL_PauseAudioStreamDevice(stream);
+  }
+  if (queued > AUDIO_MAX_QUEUE) {
+    return;
+  }
+  SDL_PutAudioStreamData(stream, samples, (int)(frames * AUDIO_FRAME_BYTES));
+  queued += (int)frames;
+  if (queued >= AUDIO_TARGET && SDL_AudioStreamDevicePaused(stream)) {
+    SDL_ResumeAudioStreamDevice(stream);
+  }
+
+  float skew = (float)(queued - AUDIO_TARGET) / AUDIO_TARGET;
+  if (skew > 1) {
+    skew = 1;
+  }
+  if (skew < -1) {
+    skew = -1;
+  }
+  SDL_SetAudioStreamFrequencyRatio(stream, 1 + skew * AUDIO_MAX_SKEW);
 }
 
 static void update_title(struct screen *screen) {
@@ -191,6 +244,7 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
   if (screen.rslcd) {
     rslcd_reset(video_framebuffer());
   }
+  SDL_AudioStream *audio = open_audio();
 
   /* a frame lasts 70224 T-cycles at 4.19 MHz, about 16.74 ms (59.73 Hz) */
   const uint64_t frame_ns = (uint64_t)FRAME_CYCLES * SDL_NS_PER_SECOND / CLOCK_HZ;
@@ -207,6 +261,7 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
     }
     io_joypad(read_buttons());
     run_frame();
+    play_audio(audio);
     if (screen.rslcd) {
       draw_rslcd(&screen);
     } else {
@@ -223,6 +278,9 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
     }
   }
 
+  if (audio != NULL) {
+    SDL_DestroyAudioStream(audio);
+  }
   if (screen.lcd != NULL) {
     SDL_DestroyTexture(screen.lcd);
   }

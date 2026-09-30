@@ -777,7 +777,15 @@ void DAA(void) {
   r.F_Z = !r.A;
 }
 
-void HALT(void) { halted = 1; /* until an interrupt is pending (see step) */ }
+void HALT(void) {
+  if (!ime && (IO_REG(IO_IF) & io_ie & INT_ALL)) {
+    /* The HALT bug: with IME off and an interrupt already pending, the CPU doesn't halt, and fails to move PC past */
+    /* the next opcode, so that byte is read twice. */
+    halt_bug = 1;
+    return;
+  }
+  halted = 1; /* until an interrupt is pending (see step) */
+}
 
 void STOP(void) { rpc8(); /* 10 00: skip the second byte (stopping the clock isn't emulated) */ }
 

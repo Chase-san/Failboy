@@ -140,6 +140,21 @@ void video_write(uint16_t, uint8_t);
 const uint8_t *video_framebuffer(void); /* LCD_WIDTH * LCD_HEIGHT shades, 0 (lightest) to 3 (darkest) */
 uint32_t video_frames(void);            /* frames finished so far; one more each time VBlank starts */
 
+/* audio.c */
+enum {
+  AUDIO_START = 0xFF10,                        /* NR10, the first sound register */
+  AUDIO_END = 0xFF3F,                          /* the last byte of wave RAM */
+  AUDIO_SAMPLE_CYCLES = 88,                    /* T-cycles per output sample */
+  AUDIO_RATE = CLOCK_HZ / AUDIO_SAMPLE_CYCLES, /* stereo samples a second, 47662 (and a half) */
+};
+
+void audio_bios_init(void);
+void audio_tick(uint32_t);
+void audio_sequencer_clock(void); /* the frame sequencer's 512 Hz clock, which comes off DIV */
+uint8_t audio_read(uint16_t);
+void audio_write(uint16_t, uint8_t);
+const int16_t *audio_samples(unsigned int *); /* the samples (left, right) made since the last call, and how many */
+
 /* mem.c */
 enum {
   VRAM_START = 0x8000,
@@ -232,6 +247,7 @@ extern uint64_t cycle_counter;
 extern uint8_t ime;
 extern uint8_t ei_delay;
 extern uint8_t halted;
+extern uint8_t halt_bug;
 extern uint8_t cpu_locked;
 
 void cpu_bios_init(void);

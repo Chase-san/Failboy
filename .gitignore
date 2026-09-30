@@ -35,6 +35,9 @@ CMakeUserPresets.json
 # clangd
 .cache/
 
+# test ROMs (see tests/roms/SOURCE.txt)
+tests/roms/
+
 # =========================
 # Operating System Files
 # =========================

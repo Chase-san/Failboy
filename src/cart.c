@@ -422,6 +422,15 @@ int cart_load(const char *filename) {
     case CART_ROM_ONLY:
       ext0_read_f = ext1_read_f = rom_read;
       break;
+    case CART_ROM_RAM:
+    case CART_ROM_RAM_BATT:
+      /* no MBC to switch the RAM on and off, so it's always on */
+      ext0_read_f = ext1_read_f = rom_read;
+      ext2_read_f = banked_ram_read;
+      ext2_write_f = banked_ram_write;
+      ram_size = header_ram_size();
+      ram_enabled = 1;
+      break;
     case CART_MBC1:
     case CART_MBC1_RAM:
     case CART_MBC1_RAM_BATT:
