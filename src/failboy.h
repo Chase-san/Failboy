@@ -32,9 +32,6 @@
 #define force_inline inline
 #endif
 
-#define HIBYTE(a) ((a) >> 8)
-#define LOBYTE(a) ((a) & 0xff)
-
 typedef uint8_t (*read_f)(uint16_t);
 typedef void (*write_f)(uint16_t, uint8_t);
 

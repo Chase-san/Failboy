@@ -14,6 +14,8 @@
  */
 
 /* SDL3 front end: a window showing each finished frame, and the keyboard as a joypad. */
+/*   arrows = D-pad, X = A, Z = B, Enter = Start, Backspace = Select, Esc = quit */
+/*   L = RSLCD on/off */
 
 #include "sdl/frontend.h"
 
@@ -25,6 +27,7 @@
 #include <SDL3/SDL_main.h>
 
 #include "failboy.h"
+#include "sdl/rslcd.h"
 
 enum {
   WINDOW_SCALE = 4,
@@ -48,6 +51,15 @@ static const struct {
     {SDL_SCANCODE_BACKSPACE, JOYPAD_SELECT}, {SDL_SCANCODE_RETURN, JOYPAD_START},
 };
 
+struct screen {
+  SDL_Window *window;
+  SDL_Renderer *renderer;
+  SDL_Texture *plain; /* LCD_WIDTH x LCD_HEIGHT */
+  SDL_Texture *lcd;   /* RSLCD, at lcd_scale output pixels per Game Boy pixel */
+  int lcd_scale;
+  int rslcd;
+};
+
 static uint8_t read_buttons(void) {
   const bool *keys = SDL_GetKeyboardState(NULL);
   uint8_t pressed = 0;
@@ -69,10 +81,35 @@ static void run_frame(void) {
   }
 }
 
-static void present(SDL_Renderer *renderer, SDL_Texture *texture) {
+static void update_title(struct screen *screen) {
+  const char *title = "Failboy";
+  if (screen->rslcd) {
+    title = "Failboy (RSLCD)";
+  }
+  SDL_SetWindowTitle(screen->window, title);
+}
+
+/* The front end's own keys; returns 0 to quit. */
+static int handle_key(struct screen *screen, SDL_Scancode key) {
+  switch (key) {
+    case SDL_SCANCODE_ESCAPE:
+      return 0;
+    case SDL_SCANCODE_L:
+      screen->rslcd = !screen->rslcd;
+      if (screen->rslcd) {
+        rslcd_reset(video_framebuffer());
+      }
+      update_title(screen);
+      return 1;
+    default:
+      return 1;
+  }
+}
+
+static void draw_plain(struct screen *screen) {
   void *pixels;
   int pitch;
-  if (SDL_LockTexture(texture, NULL, &pixels, &pitch)) {
+  if (SDL_LockTexture(screen->plain, NULL, &pixels, &pitch)) {
     const uint8_t *frame = video_framebuffer();
     for (int y = 0; y < LCD_HEIGHT; ++y) {
       uint32_t *row = (uint32_t *)((uint8_t *)pixels + y * pitch);
@@ -80,17 +117,58 @@ static void present(SDL_Renderer *renderer, SDL_Texture *texture) {
         row[x] = shade_rgb[frame[y * LCD_WIDTH + x]];
       }
     }
-    SDL_UnlockTexture(texture);
+    SDL_UnlockTexture(screen->plain);
   }
-  SDL_RenderClear(renderer);
-  SDL_RenderTexture(renderer, texture, NULL, NULL);
-  SDL_RenderPresent(renderer);
+  SDL_SetRenderLogicalPresentation(screen->renderer, LCD_WIDTH, LCD_HEIGHT, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+  SDL_RenderClear(screen->renderer);
+  SDL_RenderTexture(screen->renderer, screen->plain, NULL, NULL);
 }
 
-int frontend_run(uint64_t cycle_limit) {
-  SDL_Window *window = NULL;
-  SDL_Renderer *renderer = NULL;
-  SDL_Texture *texture = NULL;
+static void draw_rslcd(struct screen *screen) {
+  /* The biggest whole number of output pixels per Game Boy pixel that fits, drawn 1:1 so the grid stays crisp. */
+  int width = 0;
+  int height = 0;
+  SDL_GetRenderOutputSize(screen->renderer, &width, &height);
+  int scale = width / LCD_WIDTH;
+  if (height / LCD_HEIGHT < scale) {
+    scale = height / LCD_HEIGHT;
+  }
+  if (scale < 1) {
+    scale = 1;
+  }
+  if (scale > RSLCD_MAX_SCALE) {
+    scale = RSLCD_MAX_SCALE;
+  }
+  if (scale != screen->lcd_scale) {
+    if (screen->lcd != NULL) {
+      SDL_DestroyTexture(screen->lcd);
+    }
+    screen->lcd = SDL_CreateTexture(screen->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                    LCD_WIDTH * scale, LCD_HEIGHT * scale);
+    screen->lcd_scale = 0;
+    if (screen->lcd == NULL) {
+      return;
+    }
+    SDL_SetTextureScaleMode(screen->lcd, SDL_SCALEMODE_NEAREST);
+    screen->lcd_scale = scale;
+  }
+
+  rslcd_frame(video_framebuffer());
+  void *pixels;
+  int pitch;
+  if (SDL_LockTexture(screen->lcd, NULL, &pixels, &pitch)) {
+    rslcd_draw(scale, pixels, pitch / (int)sizeof(uint32_t));
+    SDL_UnlockTexture(screen->lcd);
+  }
+  SDL_SetRenderLogicalPresentation(screen->renderer, LCD_WIDTH * scale, LCD_HEIGHT * scale,
+                                   SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+  SDL_RenderClear(screen->renderer);
+  SDL_RenderTexture(screen->renderer, screen->lcd, NULL, NULL);
+}
+
+int frontend_run(uint64_t cycle_limit, int rslcd) {
+  struct screen screen = {0};
+  screen.rslcd = rslcd;
 
   /* main() is ours, not SDL_main's */
   SDL_SetMainReady();
@@ -99,16 +177,20 @@ int frontend_run(uint64_t cycle_limit) {
     return 0;
   }
   if (SDL_CreateWindowAndRenderer("Failboy", LCD_WIDTH * WINDOW_SCALE, LCD_HEIGHT * WINDOW_SCALE, SDL_WINDOW_RESIZABLE,
-                                  &window, &renderer)) {
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, LCD_WIDTH, LCD_HEIGHT);
+                                  &screen.window, &screen.renderer)) {
+    screen.plain = SDL_CreateTexture(screen.renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, LCD_WIDTH,
+                                     LCD_HEIGHT);
   }
-  if (texture == NULL) {
+  if (screen.plain == NULL) {
     fprintf(stderr, "failboy: can't open a window: %s\n", SDL_GetError());
     SDL_Quit();
     return 0;
   }
-  SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-  SDL_SetRenderLogicalPresentation(renderer, LCD_WIDTH, LCD_HEIGHT, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+  SDL_SetTextureScaleMode(screen.plain, SDL_SCALEMODE_NEAREST);
+  update_title(&screen);
+  if (screen.rslcd) {
+    rslcd_reset(video_framebuffer());
+  }
 
   /* a frame lasts 70224 T-cycles at 4.19 MHz, about 16.74 ms (59.73 Hz) */
   const uint64_t frame_ns = (uint64_t)FRAME_CYCLES * SDL_NS_PER_SECOND / CLOCK_HZ;
@@ -119,13 +201,18 @@ int frontend_run(uint64_t cycle_limit) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT) {
         running = 0;
-      } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_ESCAPE) {
+      } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && !handle_key(&screen, event.key.scancode)) {
         running = 0;
       }
     }
     io_joypad(read_buttons());
     run_frame();
-    present(renderer, texture);
+    if (screen.rslcd) {
+      draw_rslcd(&screen);
+    } else {
+      draw_plain(&screen);
+    }
+    SDL_RenderPresent(screen.renderer);
 
     next += frame_ns;
     uint64_t now = SDL_GetTicksNS();
@@ -136,9 +223,12 @@ int frontend_run(uint64_t cycle_limit) {
     }
   }
 
-  SDL_DestroyTexture(texture);
-  SDL_DestroyRenderer(renderer);
-  SDL_DestroyWindow(window);
+  if (screen.lcd != NULL) {
+    SDL_DestroyTexture(screen.lcd);
+  }
+  SDL_DestroyTexture(screen.plain);
+  SDL_DestroyRenderer(screen.renderer);
+  SDL_DestroyWindow(screen.window);
   SDL_Quit();
   return 1;
 }

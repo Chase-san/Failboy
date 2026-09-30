@@ -18,8 +18,8 @@
 
 #include <stdint.h>
 
-/* Runs the loaded cartridge in a window until it's closed, or for up to cycle_limit T-cycles. */
-/* Returns 0 if the window couldn't be opened. */
-int frontend_run(uint64_t);
+/* Runs the loaded cartridge in a window until it's closed, or for up to cycle_limit T-cycles, starting in RSLCD */
+/* mode if rslcd is set. Returns 0 if the window couldn't be opened. */
+int frontend_run(uint64_t, int);
 
 #endif /* _FRONTEND_H_ */

@@ -44,6 +44,7 @@ int doctor = 0;
 static int usage(const char *name) {
   fprintf(stderr, "usage: %s [options] rom.gb\n", name);
 #ifdef FAILBOY_SDL
+  fprintf(stderr, "  --rslcd      start with the really shitty LCD (L toggles it)\n");
   fprintf(stderr, "  --headless   run without a window (implied by the options below)\n");
 #endif
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
@@ -92,11 +93,12 @@ static void run_headless(uint64_t limit, unsigned long frames) {
   fflush(stdout);
 }
 
-static int run_window(uint64_t limit) {
+static int run_window(uint64_t limit, int rslcd) {
 #ifdef FAILBOY_SDL
-  return frontend_run(limit);
+  return frontend_run(limit, rslcd);
 #else
   (void)limit;
+  (void)rslcd;
   return 0;
 #endif
 }
@@ -107,6 +109,7 @@ int main(int argc, char *argv[]) {
   unsigned long seconds = 0;
   unsigned long frames = 0;
   int headless = 1;
+  int rslcd = 0;
 #ifdef FAILBOY_SDL
   headless = 0;
 #endif
@@ -114,6 +117,10 @@ int main(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--headless") == 0) {
       headless = 1;
+#ifdef FAILBOY_SDL
+    } else if (strcmp(argv[i], "--rslcd") == 0) {
+      rslcd = 1;
+#endif
     } else if (strcmp(argv[i], "--doctor") == 0) {
       doctor = 1;
       headless = 1;
@@ -163,7 +170,7 @@ int main(int argc, char *argv[]) {
       ok = dump_frame(dump);
     }
   } else {
-    ok = run_window(limit);
+    ok = run_window(limit, rslcd);
   }
 
   int result = io_serial_result();
