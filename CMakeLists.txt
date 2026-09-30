@@ -19,6 +19,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 	target_compile_options(failboy PRIVATE -Wall -Wextra -pedantic)
 endif()
 
+# On Windows the release builds are windowed programs, so starting one doesn't open a console as well.
+set_target_properties(failboy PROPERTIES WIN32_EXECUTABLE "$<CONFIG:Release,MinSizeRel>")
+
 # Link-time optimisation for the optimised builds (lets the compiler inline across source files).
 include(CheckIPOSupported)
 check_ipo_supported(RESULT FAILBOY_IPO OUTPUT ipo_output LANGUAGES C)

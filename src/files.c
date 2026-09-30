@@ -43,3 +43,15 @@ void *file_load(const char *filename, unsigned int *size) {
   }
   return data;
 }
+
+int file_save(const char *filename, const void *data, unsigned int size) {
+  FILE *f = fopen(filename, "wb");
+  if (f == NULL) {
+    return 0;
+  }
+  int ok = fwrite(data, size, 1, f) == 1;
+  if (fclose(f) != 0) {
+    ok = 0;
+  }
+  return ok;
+}

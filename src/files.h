@@ -20,4 +20,7 @@
 /* Returns NULL if the file can't be read, or is empty. */
 void *file_load(const char *, unsigned int *);
 
+/* Writes size bytes of data to a file, replacing it. Returns 0 if that failed. */
+int file_save(const char *, const void *, unsigned int);
+
 #endif /* _FILES_H_ */

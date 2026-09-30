@@ -48,6 +48,9 @@ extern int doctor; /* Gameboy Doctor trace mode */
 /* cart.c */
 int cart_load(const char *);
 void cart_free(void);
+unsigned int cart_battery_ram_size(void);                   /* 0 unless the cartridge RAM has a battery */
+void cart_read_battery_ram(uint8_t *, unsigned int);        /* copies the battery RAM out, to save it */
+void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
 
 /* io.c */
 enum {

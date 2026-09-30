@@ -15,12 +15,20 @@
 
 #include "failboy.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "files.h"
+
 #ifdef FAILBOY_SDL
 #include "sdl/frontend.h"
+#endif
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
 
 enum {
@@ -39,7 +47,26 @@ enum {
 /* --dump writes an 8-bit greyscale PGM, with the DMG's four shades */
 static const uint8_t dump_gray[4] = {0xFF, 0xAA, 0x55, 0x00};
 
+static const char SAVE_EXTENSION[] = ".sav";
+
 int doctor = 0;
+
+/* Release builds on Windows are windowed programs with no console of their own. When one is started from a */
+/* terminal, borrow that terminal for anything not already redirected, so usage, errors and --headless output show. */
+static void attach_console(void) {
+#ifdef _WIN32
+  int out = GetStdHandle(STD_OUTPUT_HANDLE) == NULL;
+  int err = GetStdHandle(STD_ERROR_HANDLE) == NULL;
+  if ((out || err) && AttachConsole(ATTACH_PARENT_PROCESS)) {
+    if (out) {
+      freopen("CONOUT$", "w", stdout);
+    }
+    if (err) {
+      freopen("CONOUT$", "w", stderr);
+    }
+  }
+#endif
+}
 
 static int usage(const char *name) {
   fprintf(stderr, "usage: %s [options] rom.gb\n", name);
@@ -51,6 +78,8 @@ static int usage(const char *name) {
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image\n");
   fprintf(stderr, "  --seconds N  stop after N emulated seconds (headless default %d)\n", DEFAULT_SECONDS);
+  fprintf(stderr, "  --save FILE  keep the cartridge's battery save in FILE (default: the ROM's name, ending %s)\n",
+          SAVE_EXTENSION);
   fprintf(stderr, "exit status: %d passed, %d failed, %d error, %d no result\n", EXIT_PASSED, EXIT_FAILED, EXIT_ERROR,
           EXIT_NO_RESULT);
   return EXIT_ERROR;
@@ -93,6 +122,70 @@ static void run_headless(uint64_t limit, unsigned long frames) {
   fflush(stdout);
 }
 
+/* rom.gb -> rom.sav, next to the ROM */
+static char *save_path_for(const char *rom) {
+  const char *name = rom;
+  for (const char *p = rom; *p != '\0'; ++p) {
+    if (*p == '/' || *p == '\\') {
+      name = p + 1;
+    }
+  }
+  size_t length = strlen(rom);
+  const char *dot = strrchr(name, '.');
+  if (dot != NULL && dot != name) {
+    length = dot - rom;
+  }
+  char *path = malloc(length + sizeof(SAVE_EXTENSION));
+  if (path != NULL) {
+    memcpy(path, rom, length);
+    memcpy(path + length, SAVE_EXTENSION, sizeof(SAVE_EXTENSION));
+  }
+  return path;
+}
+
+/* Loads the battery RAM from a save, if there is one. Returns 0 if there's one that can't be read, which then */
+/* mustn't be saved over. */
+static int load_battery(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (f == NULL) {
+    if (errno == ENOENT) {
+      /* no save yet */
+      return 1;
+    }
+    fprintf(stderr, "failboy: can't open the save file '%s', so it won't be saved over\n", path);
+    return 0;
+  }
+  int empty = fgetc(f) == EOF;
+  fclose(f);
+  if (empty) {
+    return 1;
+  }
+  unsigned int size = 0;
+  uint8_t *data = file_load(path, &size);
+  if (data == NULL) {
+    fprintf(stderr, "failboy: can't read the save file '%s', so it won't be saved over\n", path);
+    return 0;
+  }
+  cart_write_battery_ram(data, size);
+  free(data);
+  return 1;
+}
+
+static int save_battery(const char *path) {
+  unsigned int size = cart_battery_ram_size();
+  uint8_t *data = malloc(size);
+  int ok = data != NULL;
+  if (ok) {
+    cart_read_battery_ram(data, size);
+    ok = file_save(path, data, size);
+  }
+  if (!ok) {
+    fprintf(stderr, "failboy: can't write the save file '%s'\n", path);
+  }
+  free(data);
+  return ok;
+}
+
 static int run_window(uint64_t limit, int rslcd) {
 #ifdef FAILBOY_SDL
   return frontend_run(limit, rslcd);
@@ -106,6 +199,7 @@ static int run_window(uint64_t limit, int rslcd) {
 int main(int argc, char *argv[]) {
   const char *filename = NULL;
   const char *dump = NULL;
+  const char *save_option = NULL;
   unsigned long seconds = 0;
   unsigned long frames = 0;
   int headless = 1;
@@ -114,6 +208,7 @@ int main(int argc, char *argv[]) {
   headless = 0;
 #endif
 
+  attach_console();
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--headless") == 0) {
       headless = 1;
@@ -132,6 +227,8 @@ int main(int argc, char *argv[]) {
       headless = 1;
     } else if (strcmp(argv[i], "--seconds") == 0 && i + 1 < argc) {
       seconds = strtoul(argv[++i], NULL, 10);
+    } else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) {
+      save_option = argv[++i];
     } else if (argv[i][0] == '-' || filename != NULL) {
       return usage(argv[0]);
     } else {
@@ -159,6 +256,20 @@ int main(int argc, char *argv[]) {
   }
   cpu_bios_init();
 
+  /* Battery-backed cartridge RAM is loaded from its save now, and saved again on the way out. */
+  const char *save_file = NULL;
+  char *default_save = NULL;
+  if (cart_battery_ram_size() > 0) {
+    save_file = save_option;
+    if (save_file == NULL) {
+      default_save = save_path_for(filename);
+      save_file = default_save;
+    }
+    if (save_file != NULL && !load_battery(save_file)) {
+      save_file = NULL;
+    }
+  }
+
   int ok = 1;
   if (headless) {
     if (doctor) {
@@ -172,6 +283,11 @@ int main(int argc, char *argv[]) {
   } else {
     ok = run_window(limit, rslcd);
   }
+
+  if (save_file != NULL && !save_battery(save_file)) {
+    ok = 0;
+  }
+  free(default_save);
 
   int result = io_serial_result();
   mem_free();

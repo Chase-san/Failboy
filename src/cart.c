@@ -14,6 +14,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "failboy.h"
 #include "files.h"
@@ -59,7 +60,8 @@ static uint8_t cart_mode = MODE_MODELESS;
 static uint8_t rom_bank = 1; /* 2000-3fff: low 5 bits of the ROM bank */
 static uint8_t ram_bank = 0; /* 4000-5fff: RAM bank, or bits 5-6 of the ROM bank */
 static uint8_t ram_enabled = 0;
-static unsigned int size;
+static uint8_t battery = 0; /* the RAM keeps its contents with the power off */
+static unsigned int rom_size;
 static unsigned int rom_mask; /* number of 16 kB banks - 1 */
 static unsigned int ram_size;
 
@@ -165,28 +167,40 @@ void cart_mem_reset(void) {
   rom_bank = 1;
   ram_bank = 0;
   ram_enabled = 0;
+  battery = 0;
   rom_mask = 0;
   ram_size = 0;
   rom = NULL;
   ram = NULL;
 }
 
+static int has_battery(uint8_t type) {
+  switch (type) {
+    case CART_MBC1_RAM_BATT:
+    case CART_MBC2_BATT:
+    case CART_ROM_RAM_BATT:
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 int cart_load(const char *filename) {
   if (rom != NULL) {
     cart_free();
   }
-  rom = file_load(filename, &size);
+  rom = file_load(filename, &rom_size);
   if (rom == NULL) {
     fprintf(stderr, "failboy: can't read '%s'\n", filename);
     return 0;
   }
   /* ROMs come in 32 kB * 2^n */
-  if (size < 2 * ROM_BANK_SIZE || (size & (size - 1)) != 0) {
-    fprintf(stderr, "failboy: '%s' isn't a Game Boy ROM (size %u)\n", filename, size);
+  if (rom_size < 2 * ROM_BANK_SIZE || (rom_size & (rom_size - 1)) != 0) {
+    fprintf(stderr, "failboy: '%s' isn't a Game Boy ROM (size %u)\n", filename, rom_size);
     cart_free();
     return 0;
   }
-  rom_mask = size / ROM_BANK_SIZE - 1;
+  rom_mask = rom_size / ROM_BANK_SIZE - 1;
 
   switch (rom[HEADER_CART_TYPE]) {
     case CART_ROM_ONLY:
@@ -214,7 +228,6 @@ int cart_load(const char *filename) {
   }
 
   if (ram_size) {
-    /* TODO battery saves */
     ram = calloc(1, ram_size);
     if (ram == NULL) {
       fprintf(stderr, "failboy: out of memory\n");
@@ -222,7 +235,29 @@ int cart_load(const char *filename) {
       return 0;
     }
   }
+  battery = has_battery(rom[HEADER_CART_TYPE]);
   return 1;
+}
+
+unsigned int cart_battery_ram_size(void) {
+  if (!battery) {
+    return 0;
+  }
+  return ram_size;
+}
+
+void cart_read_battery_ram(uint8_t *buffer, unsigned int size) {
+  if (size > cart_battery_ram_size()) {
+    size = cart_battery_ram_size();
+  }
+  memcpy(buffer, ram, size);
+}
+
+void cart_write_battery_ram(const uint8_t *buffer, unsigned int size) {
+  if (size > cart_battery_ram_size()) {
+    size = cart_battery_ram_size();
+  }
+  memcpy(ram, buffer, size);
 }
 
 void cart_free(void) {
