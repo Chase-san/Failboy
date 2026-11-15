@@ -64,10 +64,12 @@ enum {
   DOT_LAST_COMPARE = 9, /* and then as 0 */
   NO_DOT = 0xFFFF,
   LAST_LINE = LCD_LINES - 1,
-  FIRST_LINE_DOT = 5,    /* where the line is as the M-cycle of the write that switched the LCD on ends */
-  FIRST_LINE_LATE = 2,   /* dots late that line's drawing is */
-  BOOT_DOT = 5,          /* where the boot ROM is taken to leave line 0 */
-  CGB_AHEAD = 2,         /* a CGB's PPU is that much further on than a DMG's, against the CPU's M-cycles */
+  FIRST_LINE_DOT = 5,   /* where the line is as the M-cycle of the write that switched the LCD on ends */
+  FIRST_LINE_LATE = 2,  /* dots late that line's drawing is */
+  BOOT_DOT = 5,         /* where the boot ROM is taken to leave line 0 */
+  CGB_AHEAD = 2,        /* a CGB's PPU is that much further on than a DMG's, against the CPU's M-cycles */
+  CGB_PIXELS_EARLY = 2, /* and its pixels start that much sooner in the line */
+  CGB_PALETTE_WRITE_LEAD = 2,
   SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
   SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands */
   DOCTOR_LY = 0x90,      /* Gameboy Doctor's logs were made with LY stuck here */
@@ -204,6 +206,7 @@ enum {
   TILE_ROW_MASK = TILE_SIZE - 1,
   FIFO_MASK = TILE_SIZE - 1,
   LOCKED = 0xFF, /* what the CPU reads from VRAM or OAM while the PPU has it */
+  TILE_GLITCH_FROM = 0x80,
 };
 
 /* which mode's STAT interrupt is being asked for, which isn't always the mode STAT shows */
@@ -261,7 +264,8 @@ struct ppu {
   uint8_t latch_dots;
   uint8_t latch_value;
   uint16_t latch_address;
-  uint8_t wx_changed; /* WX was written in the last dot */
+  uint8_t wx_changed;  /* WX was written in the last dot */
+  uint8_t tile_glitch; /* CGB: so was LCDC, clearing its tile data bit, which holds until the write's second half */
 
   /* the line's objects, rightmost first, and of those at one X the last in OAM first: fetched from the end */
   uint8_t objects;
@@ -588,6 +592,16 @@ static unsigned int tile_row_address(void) {
   return address + row * TILE_ROW_BYTES;
 }
 
+/* Half of the tile's row. CGB: in the dot after LCDC's tile data bit is cleared, a tile with an index under 128 gives
+ */
+/* the index itself for it. */
+static uint8_t fetch_data(int high) {
+  if (p.tile_glitch && p.tile < TILE_GLITCH_FROM) {
+    return p.tile;
+  }
+  return vram[tile_row_address() + high];
+}
+
 /* the fetched row into the background's FIFO, once that's empty */
 static void fetch_push(void) {
   if (p.bg_pixels) {
@@ -623,11 +637,11 @@ static void fetcher_dot(void) {
       ++p.fetch_step;
       break;
     case FETCH_LOW:
-      p.tile_low = vram[tile_row_address()];
+      p.tile_low = fetch_data(0);
       ++p.fetch_step;
       break;
     case FETCH_HIGH:
-      p.tile_high = vram[tile_row_address() + 1];
+      p.tile_high = fetch_data(1);
       if (p.window) {
         p.window_x = (p.window_x + 1) & MAP_MASK;
       }
@@ -986,7 +1000,7 @@ static void line_dot(void) {
     p.irq_mode = IRQ_NONE;
     lock(1);
     stat_update();
-  } else if (d == DOT_PIXELS + p.late) {
+  } else if (d == DOT_PIXELS + p.late - cgb * CGB_PIXELS_EARLY) {
     pixels_start();
     pixels_dot();
   } else if (d == p.hblank_dot) {
@@ -1079,6 +1093,7 @@ static void register_set(uint16_t address, uint8_t value, int lead);
 void video_tick(uint32_t cycles) {
   for (; cycles > 0; --cycles) {
     if (p.latch_dots && --p.latch_dots == 0) {
+      p.tile_glitch = 0;
       register_set(p.latch_address, p.latch_value, 1);
     }
     if (IO_REG(IO_LCDC) & LCDC_ENABLE) {
@@ -1103,11 +1118,12 @@ static void fill(uint8_t shade, uint16_t color) {
 
 static void video_blank(void) { fill(0, WHITE); }
 
-/* The clock's stopped: the DMG's screen goes blank, and a CGB's black, its PPU running on without VRAM. */
+/* The clock's stopped: the DMG's screen goes blank, and a CGB's black, its PPU running on without VRAM; unless it */
+/* was drawing, when it has VRAM still, and the picture stays. */
 void video_stop(void) {
   if (!cgb) {
     video_blank();
-  } else {
+  } else if ((IO_REG(IO_STAT) & STAT_MODE) != MODE_DRAWING) {
     fill(0, BLACK);
   }
 }
@@ -1331,6 +1347,9 @@ static int write_is_split(uint16_t address) {
 /* How many dots before the end of its M-cycle a write to this register lands: the bus holds that many back. */
 uint32_t video_write_lead(uint16_t address) {
   if (cgb) {
+    if (address == IO_BGP || address == IO_OBP0 || address == IO_OBP1) {
+      return CGB_PALETTE_WRITE_LEAD;
+    }
     return 0;
   }
   if (write_is_split(address)) {
@@ -1346,15 +1365,18 @@ void video_write(uint16_t address, uint8_t value) {
   if (p.latch_dots) {
     /* writes can't really come this close together: finish the last */
     p.latch_dots = 0;
+    p.tile_glitch = 0;
     register_set(p.latch_address, p.latch_value, 0);
-  }
-  if (!write_is_split(address)) {
-    register_set(address, value, 0);
-    return;
   }
   uint8_t old = IO_REG(address);
   uint8_t first = old | value;
-  if (address == IO_LCDC) {
+  if (cgb && address == IO_LCDC && (old & ~value & LCDC_TILE_DATA)) {
+    first = value | LCDC_TILE_DATA;
+    p.tile_glitch = 1;
+  } else if (!write_is_split(address)) {
+    register_set(address, value, 0);
+    return;
+  } else if (address == IO_LCDC) {
     first = old;
     if (p.drawing && p.x == 0) {
       first &= value | ~(LCDC_OBJ_ENABLE | LCDC_BG_ENABLE);
