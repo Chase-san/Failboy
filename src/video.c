@@ -46,10 +46,30 @@ enum {
   MODE_DRAWING = 3,
 };
 
+/* Where things happen in a line, in dots (T-cycles) from the one in which LY moves on. What's done in a dot, the CPU */
+/* sees from the next; its M-cycles end a dot into the line, and every 4 from there. */
 enum {
-  OAM_SCAN_CYCLES = 80,
-  DRAWING_CYCLES = 172, /* the shortest mode 3; the real one stretches with scrolling, the window and sprites */
-  DOCTOR_LY = 0x90,     /* Gameboy Doctor's logs were made with LY stuck here */
+  DOT_LINE = 0,       /* LY moves on, OAM is taken from the CPU's reads, and the OAM interrupt is asked for */
+  DOT_SCAN = 1,       /* mode 2 */
+  DOT_SCAN_FIRST = 3, /* the scan finishes with an object every other dot from here */
+  DOT_SCAN_EACH = 2,
+  DOT_SCAN_RELEASE = 77, /* the DMG's VRAM goes to the PPU, with 2 objects still to scan */
+  DOT_DRAWING = 81,      /* mode 3, as the scan ends */
+  DOT_PIXELS = 86,       /* the fetcher and the pixels start: mode 3 is 172 dots at its shortest, HBlank from 253 */
+  DOT_WINDOW_Y = 454,    /* a second look at WY, the first being as the pixels start */
+  DOT_VBLANK_COMPARE = 1,
+  DOT_VBLANK = 2,       /* on line 144: mode 1, and the interrupt */
+  DOT_LAST_ZERO = 3,    /* on line 153: a DMG's LY reads 0 from here, though compared as 153 */
+  DOT_LAST_NONE = 5,    /* then as nothing (here a CGB's LY goes to 0, still compared as 153) */
+  DOT_LAST_COMPARE = 9, /* and then as 0 */
+  NO_DOT = 0xFFFF,
+  LAST_LINE = LCD_LINES - 1,
+  FIRST_LINE_DOT = 5,    /* where the line is as the M-cycle of the write that switched the LCD on ends */
+  FIRST_LINE_LATE = 2,   /* dots late that line's drawing is */
+  BOOT_DOT = 5,          /* where the boot ROM is taken to leave line 0 */
+  SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
+  SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands */
+  DOCTOR_LY = 0x90,      /* Gameboy Doctor's logs were made with LY stuck here */
 };
 
 enum {
@@ -150,49 +170,171 @@ static const uint16_t compat_objects[PALETTE_COLORS] = {
     0x0000, /* black */
 };
 
-/* What shows. DMG: shades after the palettes, 0 (lightest) to 3. CGB: colors from the palettes. */
-static uint16_t frame[LCD_HEIGHT][LCD_WIDTH];
-static uint32_t frames = 0;
+/* The fetcher's steps, a dot each: it reads a tile's index, then its row's low and high bits, and holds them until */
+/* the background's pixels run out. */
+enum {
+  FETCH_TILE = 1,
+  FETCH_LOW = 3,
+  FETCH_HIGH = 5,
+  FETCH_PUSH = 6,
+};
 
-/* CGB */
-static uint8_t vram_bank = 0; /* the one the CPU sees */
-static uint8_t bg_palettes[PALETTE_RAM_SIZE];
-static uint8_t obj_palettes[PALETTE_RAM_SIZE];
-static uint16_t hdma_source = 0;
-static uint16_t hdma_dest = 0;  /* offset into VRAM */
-static uint8_t hdma_blocks = 0; /* left to copy, a block each HBlank */
-static uint8_t hdma_status = HDMA_IDLE;
+/* An object's fetch, which stops the pixels while it goes on: what's to be done when the dots waited out are over. */
+enum {
+  OBJ_NONE,    /* no fetch going */
+  OBJ_FETCHER, /* letting the background's fetcher get as far as its tile's low bits */
+  OBJ_SCROLL,  /* an object at the left edge has waited out the scroll */
+  OBJ_SETTLE,
+  OBJ_LOW,
+  OBJ_LAST, /* from here on, switching objects off doesn't stop it */
+  OBJ_HIGH,
+  OBJ_ABORTED, /* objects were switched off partway: back to the pixels */
+};
 
-/* T-cycles into the current line, and ones not yet run (short of an M-cycle, in double speed) */
-static uint32_t line_cycles = 0;
-static uint32_t spare_cycles = 0;
+enum {
+  OBJ_SETTLE_DOTS = 3,
+  SCROLL_PENALTY_MOST = 5,
+  X_START = -16, /* a tile's worth of pixels to throw away, then the first tile's, of which the scroll's go too */
+  X_SCROLLED = -TILE_SIZE,
+  WX_LAST = 165, /* the last WX that starts a window */
+  WX_OFF_SCREEN = 166,
+  WINDOW_LINE_NONE = 0xFF, /* one before the window's first line */
+  MAP_MASK = MAP_WIDTH - 1,
+  TILE_ROW_MASK = TILE_SIZE - 1,
+  FIFO_MASK = TILE_SIZE - 1,
+  LOCKED = 0xFF, /* what the CPU reads from VRAM or OAM while the PPU has it */
+};
 
-/* The window keeps its own line counter, which only moves on lines where the window is drawn. */
-static uint8_t window_line = 0;
-static uint8_t window_triggered = 0; /* LY has matched WY this frame */
+/* which mode's STAT interrupt is being asked for, which isn't always the mode STAT shows */
+enum {
+  IRQ_HBLANK = MODE_HBLANK,
+  IRQ_VBLANK = MODE_VBLANK,
+  IRQ_OAM = MODE_OAM_SCAN,
+  IRQ_NONE,
+};
 
-/* STAT's enabled interrupt conditions OR'd together; the interrupt fires when this rises. */
-static uint8_t stat_signal = 0;
+enum {
+  LY_NONE = -1, /* between lines, LY is compared with nothing */
+};
 
-const uint16_t *video_pixels(void) { return &frame[0][0]; }
+/* the pixel that starts a window at WX 0, for each of the scroll's low 3 bits */
+static const int8_t wx0_start[TILE_SIZE] = {
+    -7, -1, -2, -3, -4, -5, -6, -6,
+};
 
-uint32_t video_frames(void) { return frames; }
+struct ppu {
+  /* What shows. DMG: shades after the palettes, 0 (lightest) to 3. CGB: colors from the palettes. */
+  uint16_t frame[LCD_HEIGHT][LCD_WIDTH];
+  uint32_t frames;
 
-uint8_t vram_read(uint16_t address) { return vram[vram_bank * VRAM_SIZE + address - VRAM_START]; }
+  /* CGB */
+  uint8_t vram_bank; /* the one the CPU sees */
+  uint8_t bg_palettes[PALETTE_RAM_SIZE];
+  uint8_t obj_palettes[PALETTE_RAM_SIZE];
+  uint16_t hdma_source;
+  uint16_t hdma_dest;  /* offset into VRAM */
+  uint8_t hdma_blocks; /* left to copy, a block each HBlank */
+  uint8_t hdma_status;
 
-void vram_write(uint16_t address, uint8_t value) { vram[vram_bank * VRAM_SIZE + address - VRAM_START] = value; }
+  /* where it's got to */
+  uint16_t dot;        /* the next of the line's to run */
+  uint8_t line;        /* which LY follows, but for the last line */
+  uint8_t first_line;  /* the LCD's just come on: no OAM scan, and mode 0 until the drawing */
+  uint8_t late;        /* dots that line's drawing is put back */
+  uint8_t drawing;     /* the pixels are going */
+  uint16_t hblank_dot; /* when the line's HBlank interrupt comes, the dot after its last pixel */
+
+  /* STAT */
+  int16_t ly_compare; /* what LYC is compared with: LY, a little behind it */
+  uint8_t irq_mode;
+  uint8_t lyc_line;  /* the comparison's side of the interrupt line */
+  uint8_t stat_line; /* the enabled conditions OR'd together; the interrupt fires when this rises */
+
+  /* what the PPU keeps from the CPU */
+  uint8_t oam_read_locked;
+  uint8_t oam_write_locked;
+  uint8_t vram_read_locked;
+  uint8_t vram_write_locked;
+
+  /* a register write's second half, a dot after the first */
+  uint8_t latch_dots;
+  uint8_t latch_value;
+  uint16_t latch_address;
+  uint8_t wx_changed; /* WX was written in the last dot */
+
+  /* the line's objects, rightmost first, and of those at one X the last in OAM first: fetched from the end */
+  uint8_t objects;
+  uint8_t object_x[OBJ_PER_LINE];
+  uint8_t object_index[OBJ_PER_LINE];
+
+  /* the pixels */
+  int16_t x;     /* the next to come out of the FIFO: negative ones are thrown away */
+  uint8_t lcd_x; /* where the LCD puts it, which the window can knock out of step */
+  uint8_t fetch_step;
+  uint8_t fetch_y; /* CGB: the row, as it was for the tile's index */
+  uint8_t tile;
+  uint8_t tile_attr;
+  uint8_t tile_low;
+  uint8_t tile_high;
+  uint8_t bg_low; /* the background's FIFO: a tile's row at a time, the next pixel in the top bits */
+  uint8_t bg_high;
+  uint8_t bg_attr;
+  uint8_t bg_pixels;
+  uint8_t obj_color[TILE_SIZE]; /* the objects' FIFO: a ring */
+  uint8_t obj_attr[TILE_SIZE];
+  uint8_t obj_priority[TILE_SIZE]; /* CGB: the object's place in OAM */
+  uint8_t obj_head;
+  uint8_t obj_pixels;
+  uint8_t obj_step;
+  uint8_t obj_wait;
+  uint16_t obj_low_address;
+  uint8_t scroll_penalty; /* dots the first object at the left edge has to wait for the scroll */
+
+  /* The window keeps its own line counter, which only moves on lines where the window is drawn. */
+  uint8_t window;   /* the fetcher's on the window */
+  uint8_t window_x; /* its next tile */
+  uint8_t window_line;
+  uint8_t window_fetching; /* none of its pixels are out yet */
+  uint8_t window_late;     /* it starts next dot */
+  uint8_t wy_triggered;    /* LY has matched WY this frame */
+  uint8_t insert_pixel;    /* the window started again: a blank pixel goes in */
+};
+
+static struct ppu p;
+
+const uint16_t *video_pixels(void) { return &p.frame[0][0]; }
+
+uint32_t video_frames(void) { return p.frames; }
+
+uint8_t vram_read(uint16_t address) { return vram[p.vram_bank * VRAM_SIZE + address - VRAM_START]; }
+
+void vram_write(uint16_t address, uint8_t value) { vram[p.vram_bank * VRAM_SIZE + address - VRAM_START] = value; }
+
+/* VRAM and OAM are the PPU's while it uses them: is this one of the CPU's accesses that doesn't get through? */
+int video_locked(uint16_t address, int writing) {
+  if (doctor) {
+    return 0;
+  }
+  if (address >= VRAM_START && address < VRAM_START + VRAM_SIZE) {
+    if (writing) {
+      return p.vram_write_locked;
+    }
+    return p.vram_read_locked;
+  }
+  if (address >= OAM_START && address < OAM_START + OAM_SIZE) {
+    if (writing) {
+      return p.oam_write_locked;
+    }
+    return p.oam_read_locked;
+  }
+  return 0;
+}
 
 /* **************************************** */
-/* Rendering */
+/* Pixels */
 
 static force_inline uint8_t shade(uint8_t palette, uint8_t color) {
   return (palette >> (color * SHADE_BITS)) & SHADE_MASK;
-}
-
-/* color index (0-3) of one pixel of a tile's row: its low bits, then high bits, with the leftmost pixel's at the top */
-static force_inline uint8_t row_pixel(const uint8_t *row, int x) {
-  int bit = TILE_SIZE - 1 - x;
-  return ((row[1] >> bit) & 1) << 1 | ((row[0] >> bit) & 1);
 }
 
 /* a tile row's byte mirrored, for a tile flipped in X */
@@ -202,232 +344,62 @@ static force_inline uint8_t reverse_bits(uint8_t bits) {
   return (bits & 0xAA) >> 1 | (bits & 0x55) << 1;
 }
 
-/* the VRAM bank a tile's attributes put its data in */
-static force_inline const uint8_t *tile_bank(uint8_t attr) {
-  if (attr & ATTR_BANK) {
-    return vram + VRAM_SIZE;
-  }
-  return vram;
-}
-
-static force_inline uint16_t bg_tile(uint8_t lcdc, uint8_t index) {
-  if (lcdc & LCDC_TILE_DATA) {
-    return TILE_DATA_0 + index * TILE_BYTES;
-  }
-  return TILE_DATA_1 + (int8_t)index * TILE_BYTES;
-}
-
-/* Pixels start to end - 1 of a line, from a 256x256 tile map starting at its pixel (x, y), a tile at a time: their */
-/* color indexes and their tiles' attributes. Those are in VRAM bank 1 beside the map, where only a CGB game writes, */
-/* so they're 0 for any other. */
-static void render_map(uint8_t lcdc, uint16_t map, uint8_t x, uint8_t y, int start, int end, uint8_t *color,
-                       uint8_t *attrs) {
-  unsigned int map_row = map - VRAM_START + (y / TILE_SIZE) * MAP_WIDTH;
-  int screen_x = start;
-  while (screen_x < end) {
-    unsigned int cell = map_row + x / TILE_SIZE;
-    uint8_t attr = vram[VRAM_SIZE + cell];
-    int row = y % TILE_SIZE;
-    if (attr & ATTR_FLIP_Y) {
-      row = TILE_SIZE - 1 - row;
-    }
-    const uint8_t *data = tile_bank(attr) + (bg_tile(lcdc, vram[cell]) - VRAM_START) + row * TILE_ROW_BYTES;
-    uint8_t bits[TILE_ROW_BYTES] = {data[0], data[1]};
-    if (attr & ATTR_FLIP_X) {
-      bits[0] = reverse_bits(bits[0]);
-      bits[1] = reverse_bits(bits[1]);
-    }
-    /* the rest of this tile, or of the line */
-    int column = x % TILE_SIZE;
-    int count = TILE_SIZE - column;
-    if (count > end - screen_x) {
-      count = end - screen_x;
-    }
-    for (int i = 0; i < count; ++i) {
-      color[screen_x + i] = row_pixel(bits, column + i);
-      attrs[screen_x + i] = attr;
-    }
-    x += count; /* wrapping around the map at 256, the end of a tile */
-    screen_x += count;
-  }
-}
-
-static void render_background(uint8_t lcdc, uint8_t ly, uint8_t *color, uint8_t *attrs) {
-  uint16_t map = TILE_MAP_0;
-  if (lcdc & LCDC_BG_MAP) {
-    map = TILE_MAP_1;
-  }
-  render_map(lcdc, map, IO_REG(IO_SCX), ly + IO_REG(IO_SCY), 0, LCD_WIDTH, color, attrs);
-}
-
-static void render_window(uint8_t lcdc, uint8_t *color, uint8_t *attrs) {
-  int left = IO_REG(IO_WX) - WX_OFFSET;
-  if (!(lcdc & LCDC_WIN_ENABLE) || !window_triggered || left >= LCD_WIDTH) {
-    return;
-  }
-  uint16_t map = TILE_MAP_0;
-  if (lcdc & LCDC_WIN_MAP) {
-    map = TILE_MAP_1;
-  }
-  int start = 0;
-  if (left > 0) {
-    start = left;
-  }
-  render_map(lcdc, map, start - left, window_line, start, LCD_WIDTH, color, attrs);
-  ++window_line;
-}
-
-/* An opaque object pixel over a background pixel of color bg_color with attributes bg_attr: does it show? */
-static force_inline int object_shows(uint8_t lcdc, uint8_t attr, uint8_t bg_color, uint8_t bg_attr) {
-  if (bg_color == 0) {
-    return 1;
-  }
-  if (cgb_mode) {
-    /* LCDC bit 0 takes the background's priority away, else either one's priority bit puts the background on top */
-    return !(lcdc & LCDC_BG_ENABLE) || !((attr | bg_attr) & ATTR_BEHIND_BG);
-  }
-  return !(attr & ATTR_BEHIND_BG);
-}
-
-/* The line's objects over its background (bg_color and bg_attrs), into pixel and palette as render_line has them. */
-static void render_sprites(uint8_t lcdc, uint8_t ly, const uint8_t *bg_color, const uint8_t *bg_attrs, uint8_t *pixel,
-                           uint8_t *palette) {
-  int height = TILE_SIZE;
-  if (lcdc & LCDC_OBJ_TALL) {
-    height = TILE_SIZE * 2;
-  }
-
-  /* the first 10 sprites in OAM that cover this line */
-  const uint8_t *found[OBJ_PER_LINE];
-  int count = 0;
-  for (int i = 0; i < OBJ_COUNT && count < OBJ_PER_LINE; ++i) {
-    const uint8_t *obj = &oam[i * OBJ_BYTES];
-    int top = obj[OBJ_Y] - OBJ_Y_OFFSET;
-    if (ly >= top && ly < top + height) {
-      found[count++] = obj;
-    }
-  }
-
-  /* On the DMG the leftmost sprite wins, then the earliest in OAM: a stable sort by X. A CGB game goes by OAM alone. */
-  for (int i = 1; i < count && !cgb_mode; ++i) {
-    const uint8_t *obj = found[i];
-    int j = i;
-    for (; j > 0 && found[j - 1][OBJ_X] > obj[OBJ_X]; --j) {
-      found[j] = found[j - 1];
-    }
-    found[j] = obj;
-  }
-
-  if (count == 0) {
-    return;
-  }
-
-  /* Highest priority first: the first opaque pixel at an x claims it, even when the background then wins it. */
-  uint8_t claimed[LCD_WIDTH] = {0};
-  for (int i = 0; i < count; ++i) {
-    const uint8_t *obj = found[i];
-    uint8_t attr = obj[OBJ_ATTR];
-    int row = ly - (obj[OBJ_Y] - OBJ_Y_OFFSET);
-    if (attr & ATTR_FLIP_Y) {
-      row = height - 1 - row;
-    }
-    uint8_t index = obj[OBJ_TILE];
-    if (lcdc & LCDC_OBJ_TALL) {
-      index &= OBJ_TALL_TILE_MASK;
-    }
-    const uint8_t *bank = vram;
-    if (cgb_mode) {
-      bank = tile_bank(attr);
-    }
-    const uint8_t *data =
-        bank + (TILE_DATA_0 - VRAM_START) + (index + row / TILE_SIZE) * TILE_BYTES + (row % TILE_SIZE) * TILE_ROW_BYTES;
-    uint8_t bits[TILE_ROW_BYTES] = {data[0], data[1]};
-    if (attr & ATTR_FLIP_X) {
-      bits[0] = reverse_bits(bits[0]);
-      bits[1] = reverse_bits(bits[1]);
-    }
-    int left = obj[OBJ_X] - OBJ_X_OFFSET;
-    for (int column = 0; column < TILE_SIZE; ++column) {
-      int x = left + column;
-      if (x < 0 || x >= LCD_WIDTH || claimed[x]) {
-        continue;
-      }
-      uint8_t color = row_pixel(bits, column);
-      if (color == 0) {
-        /* transparent, so a lower-priority sprite can show through */
-        continue;
-      }
-      claimed[x] = 1;
-      if (!object_shows(lcdc, attr, bg_color[x], bg_attrs[x])) {
-        continue;
-      }
-      if (cgb_mode) {
-        pixel[x] = color;
-        palette[x] = PALETTES + (attr & ATTR_CGB_PALETTE);
-      } else if (attr & ATTR_PALETTE) {
-        pixel[x] = shade(IO_REG(IO_OBP1), color);
-        palette[x] = PALETTES + 1;
-      } else {
-        pixel[x] = shade(IO_REG(IO_OBP0), color);
-        palette[x] = PALETTES;
-      }
-    }
-  }
-}
+/* the color index (0-3) in the top bits of a row's low and high bits */
+static force_inline uint8_t top_pixel(uint8_t low, uint8_t high) { return (high >> 7) << 1 | low >> 7; }
 
 /* CGB: color index of a palette, 0-7 in background palette RAM and 8-15 in object palette RAM */
 static uint16_t palette_color(uint8_t palette, uint8_t index) {
-  const uint8_t *ram = bg_palettes;
+  const uint8_t *ram = p.bg_palettes;
   if (palette >= PALETTES) {
-    ram = obj_palettes;
+    ram = p.obj_palettes;
     palette -= PALETTES;
   }
   const uint8_t *color = &ram[(palette * PALETTE_COLORS + index) * COLOR_BYTES];
   return (color[0] | color[1] << BYTE_BITS) & COLOR_MASK;
 }
 
-static void render_line(uint8_t ly) {
+/* A background pixel and the object pixel over it (color 0 for none), as the LCD gets them: palettes and LCDC are */
+/* read as the pixel goes by. */
+static uint16_t mix(uint8_t bg_color, uint8_t bg_attr, uint8_t obj_color, uint8_t obj_attr) {
   uint8_t lcdc = IO_REG(IO_LCDC);
-  /* the background and window's color indexes and attributes, which sprite priority needs */
-  uint8_t color[LCD_WIDTH];
-  uint8_t attrs[LCD_WIDTH];
-  /* What shows: a color index and its palette, 0-7 the background's, 8-15 the objects'. For a DMG game, the index is */
-  /* the shade its palette register gives, and the palette only matters to a CGB running it: 0, 8 for OBP0, 9 OBP1. */
-  uint8_t pixel[LCD_WIDTH];
-  uint8_t palette[LCD_WIDTH];
+  uint8_t behind = bg_attr & ATTR_BEHIND_BG;
+  int object = obj_color != 0 && (lcdc & LCDC_OBJ_ENABLE);
+  if (object) {
+    behind |= obj_attr & ATTR_BEHIND_BG;
+  }
+  if (!(lcdc & LCDC_BG_ENABLE)) {
+    /* which takes the background's priority away from a CGB game, and blanks it for any other */
+    if (cgb_mode) {
+      behind = 0;
+    } else {
+      bg_color = 0;
+    }
+  }
+  if (bg_color != 0 && behind) {
+    object = 0;
+  }
 
   if (cgb_mode) {
-    render_background(lcdc, ly, color, attrs);
-    render_window(lcdc, color, attrs);
-    for (int x = 0; x < LCD_WIDTH; ++x) {
-      pixel[x] = color[x];
-      palette[x] = attrs[x] & ATTR_CGB_PALETTE;
+    if (object) {
+      return palette_color(PALETTES + (obj_attr & ATTR_CGB_PALETTE), obj_color);
     }
-  } else if (lcdc & LCDC_BG_ENABLE) {
-    render_background(lcdc, ly, color, attrs);
-    render_window(lcdc, color, attrs);
-    for (int x = 0; x < LCD_WIDTH; ++x) {
-      pixel[x] = shade(IO_REG(IO_BGP), color[x]);
-      palette[x] = 0;
-    }
-  } else {
-    memset(color, 0, sizeof(color));
-    memset(attrs, 0, sizeof(attrs));
-    memset(pixel, 0, sizeof(pixel));
-    memset(palette, 0, sizeof(palette));
+    return palette_color(bg_attr & ATTR_CGB_PALETTE, bg_color);
   }
-  if (lcdc & LCDC_OBJ_ENABLE) {
-    render_sprites(lcdc, ly, color, attrs, pixel, palette);
+  /* A DMG game's color index goes through its palette register to a shade, which is what a DMG shows; a CGB */
+  /* running it has palettes for those: 0 for the background, 8 for OBP0 and 9 for OBP1. */
+  uint8_t pixel = shade(IO_REG(IO_BGP), bg_color);
+  uint8_t palette = 0;
+  if (object && (obj_attr & ATTR_PALETTE)) {
+    pixel = shade(IO_REG(IO_OBP1), obj_color);
+    palette = PALETTES + 1;
+  } else if (object) {
+    pixel = shade(IO_REG(IO_OBP0), obj_color);
+    palette = PALETTES;
   }
-
-  /* a DMG's shades are what shows; a CGB's color indexes go through its palettes */
-  for (int x = 0; x < LCD_WIDTH; ++x) {
-    if (!cgb) {
-      frame[ly][x] = pixel[x];
-    } else {
-      frame[ly][x] = palette_color(palette[x], pixel[x]);
-    }
+  if (!cgb) {
+    return pixel;
   }
+  return palette_color(palette, pixel);
 }
 
 /* **************************************** */
@@ -435,33 +407,33 @@ static void render_line(uint8_t ly) {
 
 static void hdma_copy(void) {
   for (int i = 0; i < HDMA_BLOCK; ++i) {
-    vram_write(VRAM_START + ((hdma_dest + i) & (VRAM_SIZE - 1)), mem_read(hdma_source + i));
+    vram_write(VRAM_START + ((p.hdma_dest + i) & (VRAM_SIZE - 1)), mem_read(p.hdma_source + i));
   }
-  hdma_source += HDMA_BLOCK;
-  hdma_dest += HDMA_BLOCK;
+  p.hdma_source += HDMA_BLOCK;
+  p.hdma_dest += HDMA_BLOCK;
 }
 
 /* the start of an HBlank: a block of an HBlank copy */
 static void hdma_hblank(void) {
-  if (hdma_blocks) {
+  if (p.hdma_blocks) {
     hdma_copy();
-    --hdma_blocks;
-    hdma_status = hdma_blocks - 1;
-    if (hdma_blocks == 0) {
-      hdma_status = HDMA_IDLE;
+    --p.hdma_blocks;
+    p.hdma_status = p.hdma_blocks - 1;
+    if (p.hdma_blocks == 0) {
+      p.hdma_status = HDMA_IDLE;
     }
   }
 }
 
 static void hdma_start(uint8_t value) {
   uint8_t blocks = (value & HDMA_BLOCKS) + 1;
-  if (hdma_blocks && !(value & HDMA_HBLANK)) {
+  if (p.hdma_blocks && !(value & HDMA_HBLANK)) {
     /* ends an HBlank copy early, and HDMA5 reads back what was written */
-    hdma_status = HDMA_HBLANK | value;
-    hdma_blocks = 0;
+    p.hdma_status = HDMA_HBLANK | value;
+    p.hdma_blocks = 0;
   } else if (value & HDMA_HBLANK) {
-    hdma_blocks = blocks;
-    hdma_status = hdma_blocks - 1;
+    p.hdma_blocks = blocks;
+    p.hdma_status = p.hdma_blocks - 1;
     /* with no line being drawn (in HBlank already, or the LCD off), the first block goes right away */
     if ((IO_REG(IO_STAT) & STAT_MODE) == MODE_HBLANK) {
       hdma_hblank();
@@ -471,91 +443,645 @@ static void hdma_start(uint8_t value) {
     for (; blocks > 0; --blocks) {
       hdma_copy();
     }
-    hdma_status = HDMA_IDLE;
+    p.hdma_status = HDMA_IDLE;
   }
 }
 
 /* **************************************** */
-/* Timing */
+/* STAT, and its interrupt */
 
-static void update_stat(void) {
-  uint8_t stat = IO_REG(IO_STAT);
-  uint8_t mode = stat & STAT_MODE;
-  uint8_t signal = 0;
-  if (IO_REG(IO_LCDC) & LCDC_ENABLE) {
-    signal = ((stat & STAT_INT_LYC) && (stat & STAT_LYC_EQUAL)) || ((stat & STAT_INT_HBLANK) && mode == MODE_HBLANK) ||
-             ((stat & STAT_INT_VBLANK) && mode == MODE_VBLANK) || ((stat & STAT_INT_OAM) && mode == MODE_OAM_SCAN);
-  }
-  if (signal && !stat_signal) {
-    io_request(INT_STAT);
-  }
-  stat_signal = signal;
-}
-
-static void set_mode(uint8_t mode) {
-  IO_REG(IO_STAT) = (IO_REG(IO_STAT) & ~STAT_MODE) | mode;
-  update_stat();
-}
-
-static void compare_lyc(void) {
-  if (IO_REG(IO_LY) == IO_REG(IO_LYC)) {
-    IO_REG(IO_STAT) |= STAT_LYC_EQUAL;
-  } else {
-    IO_REG(IO_STAT) &= ~STAT_LYC_EQUAL;
-  }
-  update_stat();
-}
-
-/* LY has just moved on to a new line */
-static void start_line(void) {
-  uint8_t ly = IO_REG(IO_LY);
-  if (ly == 0) {
-    window_line = 0;
-    window_triggered = 0;
-  }
-  if (ly < LCD_HEIGHT) {
-    if (ly == IO_REG(IO_WY)) {
-      window_triggered = 1;
-    }
-    set_mode(MODE_OAM_SCAN);
-  } else if (ly == LCD_HEIGHT) {
-    set_mode(MODE_VBLANK);
-    io_request(INT_VBLANK);
-    ++frames;
-    host_frame();
-  }
-  compare_lyc();
-}
-
-/* one M-cycle of the PPU */
-static void video_cycle(void) {
-  line_cycles += M_CYCLE;
-  if (IO_REG(IO_LY) < LCD_HEIGHT) {
-    if (line_cycles == OAM_SCAN_CYCLES) {
-      set_mode(MODE_DRAWING);
-    } else if (line_cycles == OAM_SCAN_CYCLES + DRAWING_CYCLES) {
-      render_line(IO_REG(IO_LY));
-      set_mode(MODE_HBLANK);
-      hdma_hblank();
-    }
-  }
-  if (line_cycles == LINE_CYCLES) {
-    line_cycles = 0;
-    if (++IO_REG(IO_LY) == LCD_LINES) {
-      IO_REG(IO_LY) = 0;
-    }
-    start_line();
-  }
-}
-
-void video_tick(uint32_t cycles) {
+/* Compares LY with LYC, and works the interrupt line out again. With the LCD off nothing moves: the flag and the */
+/* line stay as they were, so a comparison that still holds when it comes back on doesn't interrupt again. */
+static void stat_update(void) {
   if (!(IO_REG(IO_LCDC) & LCDC_ENABLE)) {
     return;
   }
-  for (cycles += spare_cycles; cycles >= M_CYCLE; cycles -= M_CYCLE) {
-    video_cycle();
+  uint8_t stat = IO_REG(IO_STAT);
+  if (p.ly_compare != LY_NONE) {
+    p.lyc_line = p.ly_compare == IO_REG(IO_LYC);
+    stat &= ~STAT_LYC_EQUAL;
+    if (p.lyc_line) {
+      stat |= STAT_LYC_EQUAL;
+    }
+  } else if (!cgb) {
+    /* the flag drops between lines, though the interrupt line holds; a CGB (from revision D) keeps both */
+    stat &= ~STAT_LYC_EQUAL;
   }
-  spare_cycles = cycles;
+  IO_REG(IO_STAT) = stat;
+
+  uint8_t line = 0;
+  switch (p.irq_mode) {
+    case IRQ_HBLANK:
+      line = (stat & STAT_INT_HBLANK) != 0;
+      break;
+    case IRQ_VBLANK:
+      line = (stat & STAT_INT_VBLANK) != 0;
+      break;
+    case IRQ_OAM:
+      line = (stat & STAT_INT_OAM) != 0;
+      break;
+    default:
+      break;
+  }
+  if ((stat & STAT_INT_LYC) && p.lyc_line) {
+    line = 1;
+  }
+  if (line && !p.stat_line) {
+    io_request(INT_STAT);
+  }
+  p.stat_line = line;
+}
+
+static void set_mode(uint8_t mode) { IO_REG(IO_STAT) = (IO_REG(IO_STAT) & ~STAT_MODE) | mode; }
+
+static void lock(uint8_t locked) {
+  p.oam_read_locked = locked;
+  p.oam_write_locked = locked;
+  p.vram_read_locked = locked;
+  p.vram_write_locked = locked;
+}
+
+/* **************************************** */
+/* Mode 2: the OAM scan, for the first 10 objects that cover the line */
+
+static void scan_object(int index) {
+  const uint8_t *obj = &oam[index * OBJ_BYTES];
+  int height = TILE_SIZE;
+  if (IO_REG(IO_LCDC) & LCDC_OBJ_TALL) {
+    height = TILE_SIZE * 2;
+  }
+  int top = obj[OBJ_Y] - OBJ_Y_OFFSET;
+  if (p.objects == OBJ_PER_LINE || p.line < top || p.line >= top + height) {
+    return;
+  }
+  /* kept sorted, so that the leftmost, and of those the first in OAM, is at the end */
+  int at = 0;
+  while (at < p.objects && p.object_x[at] > obj[OBJ_X]) {
+    ++at;
+  }
+  for (int i = p.objects; i > at; --i) {
+    p.object_x[i] = p.object_x[i - 1];
+    p.object_index[i] = p.object_index[i - 1];
+  }
+  p.object_x[at] = obj[OBJ_X];
+  p.object_index[at] = index;
+  ++p.objects;
+}
+
+/* **************************************** */
+/* Mode 3: the background and window's fetcher */
+
+/* the row of the tile map the fetcher is on */
+static force_inline uint8_t fetch_row(void) {
+  if (p.window) {
+    return p.window_line;
+  }
+  return p.line + IO_REG(IO_SCY);
+}
+
+static void fetch_tile(void) {
+  uint8_t lcdc = IO_REG(IO_LCDC);
+  uint16_t map = TILE_MAP_0;
+  uint8_t column;
+  if (p.window) {
+    if (lcdc & LCDC_WIN_MAP) {
+      map = TILE_MAP_1;
+    }
+    column = p.window_x;
+  } else {
+    if (lcdc & LCDC_BG_MAP) {
+      map = TILE_MAP_1;
+    }
+    if (p.x < X_SCROLLED) {
+      column = IO_REG(IO_SCX) / TILE_SIZE;
+    } else {
+      column = ((IO_REG(IO_SCX) + p.x + TILE_SIZE) / TILE_SIZE) & MAP_MASK;
+    }
+  }
+  p.fetch_y = fetch_row();
+  unsigned int cell = map - VRAM_START + (p.fetch_y / TILE_SIZE) * MAP_WIDTH + column;
+  p.tile = vram[cell];
+  /* A CGB's attributes are in VRAM bank 1 beside the map, where only a CGB game writes: 0 for any other. */
+  p.tile_attr = vram[VRAM_SIZE + cell];
+}
+
+/* where the tile's row is in vram[]: LCDC and, off a CGB, the scroll are read again for each half */
+static unsigned int tile_row_address(void) {
+  uint8_t y = p.fetch_y;
+  if (!cgb) {
+    y = fetch_row();
+  }
+  int row = y & TILE_ROW_MASK;
+  if (p.tile_attr & ATTR_FLIP_Y) {
+    row = TILE_SIZE - 1 - row;
+  }
+  unsigned int address = TILE_DATA_1 - VRAM_START + (int8_t)p.tile * TILE_BYTES;
+  if (IO_REG(IO_LCDC) & LCDC_TILE_DATA) {
+    address = TILE_DATA_0 - VRAM_START + p.tile * TILE_BYTES;
+  }
+  if (p.tile_attr & ATTR_BANK) {
+    address += VRAM_SIZE;
+  }
+  return address + row * TILE_ROW_BYTES;
+}
+
+/* the fetched row into the background's FIFO, once that's empty */
+static void fetch_push(void) {
+  if (p.bg_pixels) {
+    return;
+  }
+  /* DMG: with the window switched off after its line has come, a blank pixel goes in where it would have started */
+  if (p.wy_triggered && !(IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && !cgb) {
+    int wx = 0;
+    if (p.x + WX_OFFSET >= 0) {
+      wx = p.x + WX_OFFSET;
+    }
+    if (IO_REG(IO_WX) == wx) {
+      p.bg_low = p.bg_high = p.bg_attr = 0;
+      p.bg_pixels = 1;
+      return;
+    }
+  }
+  p.bg_low = p.tile_low;
+  p.bg_high = p.tile_high;
+  if (p.tile_attr & ATTR_FLIP_X) {
+    p.bg_low = reverse_bits(p.bg_low);
+    p.bg_high = reverse_bits(p.bg_high);
+  }
+  p.bg_attr = p.tile_attr;
+  p.bg_pixels = TILE_SIZE;
+  p.fetch_step = 0;
+}
+
+static void fetcher_dot(void) {
+  switch (p.fetch_step) {
+    case FETCH_TILE:
+      fetch_tile();
+      ++p.fetch_step;
+      break;
+    case FETCH_LOW:
+      p.tile_low = vram[tile_row_address()];
+      ++p.fetch_step;
+      break;
+    case FETCH_HIGH:
+      p.tile_high = vram[tile_row_address() + 1];
+      if (p.window) {
+        p.window_x = (p.window_x + 1) & MAP_MASK;
+      }
+      p.fetch_step = FETCH_PUSH;
+      fetch_push();
+      break;
+    case FETCH_PUSH:
+      fetch_push();
+      break;
+    default:
+      ++p.fetch_step;
+      break;
+  }
+}
+
+/* **************************************** */
+/* Mode 3: objects */
+
+/* where the row of an object that covers this line is in vram[]: LCDC's object size is read each time */
+static unsigned int object_row_address(const uint8_t *obj) {
+  int rows = TILE_SIZE;
+  uint8_t index = obj[OBJ_TILE];
+  if (IO_REG(IO_LCDC) & LCDC_OBJ_TALL) {
+    rows = TILE_SIZE * 2;
+    index &= OBJ_TALL_TILE_MASK;
+  }
+  int row = (p.line - obj[OBJ_Y]) & (rows - 1);
+  if (obj[OBJ_ATTR] & ATTR_FLIP_Y) {
+    row = rows - 1 - row;
+  }
+  unsigned int address = TILE_DATA_0 - VRAM_START + index * TILE_BYTES + row * TILE_ROW_BYTES;
+  if (cgb_mode && (obj[OBJ_ATTR] & ATTR_BANK)) {
+    address += VRAM_SIZE;
+  }
+  return address;
+}
+
+/* An object's row over the objects' FIFO: a pixel goes in where there's none yet, so the first fetched (the */
+/* leftmost) wins, or in a CGB game where the one there is later in OAM. */
+static void object_overlay(uint8_t low, uint8_t high, uint8_t attr, uint8_t index) {
+  for (; p.obj_pixels < TILE_SIZE; ++p.obj_pixels) {
+    p.obj_color[(p.obj_head + p.obj_pixels) & FIFO_MASK] = 0;
+  }
+  if (attr & ATTR_FLIP_X) {
+    low = reverse_bits(low);
+    high = reverse_bits(high);
+  }
+  uint8_t priority = 0;
+  if (cgb_mode) {
+    priority = index;
+  }
+  for (int i = 0; i < TILE_SIZE; ++i) {
+    uint8_t color = top_pixel(low, high);
+    int slot = (p.obj_head + i) & FIFO_MASK;
+    if (color != 0 && (p.obj_color[slot] == 0 || p.obj_priority[slot] > priority)) {
+      p.obj_color[slot] = color;
+      p.obj_attr[slot] = attr;
+      p.obj_priority[slot] = priority;
+    }
+    low <<= 1;
+    high <<= 1;
+  }
+}
+
+/* the X of an object that's to be fetched before the next pixel goes: ones at the left edge before any does */
+static force_inline int object_match(void) {
+  if (p.x < X_SCROLLED) {
+    return 0;
+  }
+  return p.x + OBJ_X_OFFSET;
+}
+
+/* A DMG doesn't fetch objects at all while they're switched off; a CGB does, and hides them. */
+static force_inline int objects_fetched(void) { return cgb || (IO_REG(IO_LCDC) & LCDC_OBJ_ENABLE); }
+
+/* Is there an object to fetch here? Ones the pixels have gone past are dropped. */
+static int object_due(void) {
+  while (p.objects && p.x >= X_SCROLLED && p.object_x[p.objects - 1] < p.x + OBJ_X_OFFSET) {
+    --p.objects;
+  }
+  return p.objects && objects_fetched() && p.object_x[p.objects - 1] == object_match();
+}
+
+/* A dot of the objects' fetches; returns whether one is holding the pixels up. A fetch waits for the background's */
+/* fetcher to have its tile's low bits, then takes 6 dots; a second object at the same X follows straight on. */
+static int objects_dot(void) {
+  if (p.obj_step == OBJ_ABORTED) {
+    p.obj_step = OBJ_NONE;
+    return 0;
+  }
+  if (p.obj_wait && --p.obj_wait) {
+    return 1;
+  }
+  for (;;) {
+    const uint8_t *obj;
+    switch (p.obj_step) {
+      case OBJ_NONE:
+        if (!object_due()) {
+          return 0;
+        }
+        p.obj_step = OBJ_FETCHER;
+        break;
+      case OBJ_FETCHER:
+        if (p.fetch_step < FETCH_HIGH || p.bg_pixels == 0) {
+          fetcher_dot();
+          p.obj_wait = 1;
+          return 1;
+        }
+        p.obj_step = OBJ_SCROLL;
+        /* the first at the left edge waits for the pixels the scroll throws away, too */
+        if (p.scroll_penalty && p.object_x[p.objects - 1] == 0) {
+          p.obj_wait = p.scroll_penalty;
+          p.scroll_penalty = 0;
+          return 1;
+        }
+        break;
+      case OBJ_SCROLL:
+        fetcher_dot();
+        p.obj_wait = 1;
+        p.obj_step = OBJ_SETTLE;
+        return 1;
+      case OBJ_SETTLE:
+        fetcher_dot();
+        p.obj_wait = OBJ_SETTLE_DOTS;
+        p.obj_step = OBJ_LOW;
+        return 1;
+      case OBJ_LOW:
+        p.obj_low_address = object_row_address(&oam[p.object_index[p.objects - 1] * OBJ_BYTES]);
+        p.obj_wait = 1;
+        p.obj_step = OBJ_LAST;
+        return 1;
+      case OBJ_LAST:
+        p.obj_wait = 1;
+        p.obj_step = OBJ_HIGH;
+        return 1;
+      case OBJ_HIGH:
+        /* the high bits' address is worked out again, so a change of object size in between splits the row */
+        obj = &oam[p.object_index[p.objects - 1] * OBJ_BYTES];
+        object_overlay(vram[p.obj_low_address], vram[object_row_address(obj) + 1], obj[OBJ_ATTR],
+                       p.object_index[p.objects - 1]);
+        --p.objects;
+        p.obj_step = OBJ_NONE;
+        break;
+      default:
+        return 0;
+    }
+  }
+}
+
+/* **************************************** */
+/* Mode 3: the window, and the pixels */
+
+static void window_start(void) {
+  p.window = 1;
+  p.window_x = 0;
+  p.window_fetching = 1;
+  p.bg_pixels = 0;
+  p.fetch_step = 0;
+}
+
+/* Does the window start at the next pixel? Returns whether it does, but only from the dot after. */
+static int window_check(void) {
+  uint8_t lcdc = IO_REG(IO_LCDC);
+  uint8_t wx = IO_REG(IO_WX);
+  if (!p.window && p.wy_triggered && (lcdc & LCDC_WIN_ENABLE)) {
+    int start = 0;
+    if (wx == 0) {
+      start = p.x == wx0_start[IO_REG(IO_SCX) & TILE_ROW_MASK] && !p.wx_changed;
+    } else if (wx <= WX_LAST + cgb) {
+      if (wx == p.x + WX_OFFSET) {
+        start = 1;
+      } else if (wx == p.x + WX_OFFSET - 1 && !p.wx_changed) {
+        /* A pixel late for the comparison, it still starts, and a DMG's LCD loses step with the PPU by a pixel. */
+        start = 1;
+        if (!cgb && p.lcd_x > 0) {
+          --p.lcd_x;
+        }
+      }
+    }
+    if (start) {
+      ++p.window_line;
+      if (wx == 0 && (IO_REG(IO_SCX) & TILE_ROW_MASK)) {
+        p.window_late = 1;
+        return 1;
+      }
+      window_start();
+    } else if (!cgb && wx == WX_OFF_SCREEN && wx == p.x + WX_OFFSET) {
+      /* DMG: too far right to show, but its line counter moves */
+      ++p.window_line;
+    }
+  }
+  /* DMG: WX matching again while the window's being drawn puts a blank pixel in */
+  if (!cgb && p.window && !p.window_fetching && p.fetch_step == 0 && wx == p.x + WX_OFFSET &&
+      p.bg_pixels == TILE_SIZE) {
+    p.insert_pixel = 1;
+  }
+  return 0;
+}
+
+/* The next pixel out of the FIFOs, if the background's has one: thrown away while x is negative, else to the LCD. */
+static void pixel_pop(void) {
+  /* an object at the left edge still to fetch holds the pixels back, and the scroll with them */
+  if (p.objects && objects_fetched() && p.object_x[p.objects - 1] == 0) {
+    return;
+  }
+  if (p.bg_pixels == 0) {
+    return;
+  }
+  uint8_t color = 0;
+  uint8_t attr = 0;
+  if (p.insert_pixel) {
+    p.insert_pixel = 0;
+  } else {
+    color = top_pixel(p.bg_low, p.bg_high);
+    attr = p.bg_attr;
+    p.bg_low <<= 1;
+    p.bg_high <<= 1;
+    --p.bg_pixels;
+  }
+  uint8_t obj_color = 0;
+  uint8_t obj_attr = 0;
+  if (p.obj_pixels) {
+    obj_color = p.obj_color[p.obj_head];
+    obj_attr = p.obj_attr[p.obj_head];
+    p.obj_head = (p.obj_head + 1) & FIFO_MASK;
+    --p.obj_pixels;
+  }
+
+  /* The scroll's low 3 bits: pixels go until x's match them, then the rest of a tile's worth. If SCX moves so that */
+  /* they never match, it goes round again. */
+  if (p.x < X_SCROLLED) {
+    uint8_t scroll = IO_REG(IO_SCX) & TILE_ROW_MASK;
+    if ((p.x & TILE_ROW_MASK) == scroll) {
+      p.x = X_SCROLLED;
+    } else if (p.window_fetching && (p.x & TILE_ROW_MASK) == TILE_ROW_MASK - 1 && scroll == TILE_ROW_MASK) {
+      p.x = X_SCROLLED;
+    } else if (p.x == X_SCROLLED - 1) {
+      p.x = X_START;
+      return;
+    }
+  }
+  if (p.x < 0) {
+    ++p.x;
+    return;
+  }
+  if (p.lcd_x < LCD_WIDTH) {
+    p.frame[p.line][p.lcd_x] = mix(color, attr, obj_color, obj_attr);
+  }
+  ++p.x;
+  ++p.lcd_x;
+  p.window_fetching = 0;
+}
+
+/* mode 3 is over, as long as the scroll, the window and the objects made it */
+static void drawing_end(void) {
+  /* a line the window's left a pixel short is filled out with its last */
+  for (; p.lcd_x > 0 && p.lcd_x < LCD_WIDTH; ++p.lcd_x) {
+    p.frame[p.line][p.lcd_x] = p.frame[p.line][p.lcd_x - 1];
+  }
+  p.drawing = 0;
+  set_mode(MODE_HBLANK);
+  lock(0);
+  /* the interrupt comes a dot after the mode */
+  p.irq_mode = IRQ_HBLANK;
+  p.hblank_dot = p.dot + 1;
+}
+
+static void pixels_start(void) {
+  if ((IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && IO_REG(IO_WY) == p.line) {
+    p.wy_triggered = 1;
+  }
+  p.drawing = 1;
+  p.x = X_START;
+  p.lcd_x = 0;
+  p.fetch_step = 0;
+  /* a tile's worth of nothing to start with, which only takes time */
+  p.bg_low = p.bg_high = p.bg_attr = 0;
+  p.bg_pixels = TILE_SIZE;
+  p.obj_head = 0;
+  p.obj_pixels = 0;
+  p.obj_step = OBJ_NONE;
+  p.obj_wait = 0;
+  p.scroll_penalty = IO_REG(IO_SCX) & TILE_ROW_MASK;
+  if (p.scroll_penalty > SCROLL_PENALTY_MOST) {
+    p.scroll_penalty = SCROLL_PENALTY_MOST;
+  }
+  p.window = 0;
+  p.window_fetching = 0;
+  p.window_late = 0;
+  p.insert_pixel = 0;
+}
+
+static void pixels_dot(void) {
+  if (p.window_late) {
+    p.window_late = 0;
+    window_start();
+  } else if (p.obj_step == OBJ_NONE && window_check()) {
+    return;
+  }
+  if (objects_dot()) {
+    return;
+  }
+  pixel_pop();
+  fetcher_dot();
+  if (p.x == LCD_WIDTH) {
+    drawing_end();
+  }
+}
+
+/* **************************************** */
+/* The line */
+
+/* a line on the screen, bar its pixels */
+static void line_dot(void) {
+  uint16_t d = p.dot;
+  if (p.first_line) {
+    if (d == DOT_DRAWING + p.late - DOT_SCAN_EACH) {
+      p.oam_write_locked = 1;
+    }
+  } else if (d == DOT_LINE) {
+    IO_REG(IO_LY) = p.line;
+    p.oam_read_locked = 1;
+    p.oam_write_locked = cgb;
+    p.hblank_dot = NO_DOT;
+    /* The OAM interrupt comes a dot before the mode, but not on the first line; LY isn't compared for that dot. */
+    if (p.line != 0) {
+      p.ly_compare = LY_NONE;
+      p.irq_mode = IRQ_OAM;
+      set_mode(MODE_HBLANK);
+    } else if (!cgb) {
+      set_mode(MODE_HBLANK);
+    }
+    stat_update();
+  } else if (d == DOT_SCAN) {
+    set_mode(MODE_OAM_SCAN);
+    p.oam_write_locked = 1;
+    p.ly_compare = p.line;
+    p.irq_mode = IRQ_OAM;
+    stat_update();
+    /* asked for only for that dot */
+    p.irq_mode = IRQ_NONE;
+    stat_update();
+    p.objects = 0;
+  } else if (d >= DOT_SCAN_FIRST && d <= DOT_DRAWING && (d - DOT_SCAN_FIRST) % DOT_SCAN_EACH == 0) {
+    scan_object((d - DOT_SCAN_FIRST) / DOT_SCAN_EACH);
+    if (d == DOT_SCAN_RELEASE && !cgb) {
+      /* a DMG stops reading VRAM a little before the drawing, and lets OAM be written until it */
+      p.vram_read_locked = 1;
+      p.oam_write_locked = 0;
+    }
+  }
+
+  if (d == DOT_DRAWING + p.late) {
+    set_mode(MODE_DRAWING);
+    p.irq_mode = IRQ_NONE;
+    lock(1);
+    stat_update();
+  } else if (d == DOT_PIXELS + p.late) {
+    pixels_start();
+    pixels_dot();
+  } else if (d == p.hblank_dot) {
+    stat_update();
+    hdma_hblank();
+  } else if (d == DOT_WINDOW_Y) {
+    if ((IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && IO_REG(IO_WY) == p.line) {
+      p.wy_triggered = 1;
+    }
+  }
+}
+
+/* the 10 lines of VBlank; the last shows LY as 0 almost from its start */
+static void vblank_dot(void) {
+  uint16_t d = p.dot;
+  if (d == DOT_LINE) {
+    IO_REG(IO_LY) = p.line;
+    p.ly_compare = LY_NONE;
+    stat_update();
+    /* STAT's OAM interrupt comes for the first line of VBlank, too */
+    if (p.line == LCD_HEIGHT && !p.stat_line && (IO_REG(IO_STAT) & STAT_INT_OAM)) {
+      io_request(INT_STAT);
+    }
+    return;
+  }
+  if (p.line == LAST_LINE) {
+    if (!cgb) {
+      if (d == DOT_LAST_ZERO) {
+        IO_REG(IO_LY) = 0;
+        p.ly_compare = LAST_LINE;
+        stat_update();
+      } else if (d == DOT_LAST_NONE) {
+        p.ly_compare = LY_NONE;
+        stat_update();
+      }
+    } else if (d == DOT_VBLANK_COMPARE) {
+      p.ly_compare = LAST_LINE;
+      stat_update();
+    } else if (d == DOT_LAST_NONE) {
+      IO_REG(IO_LY) = 0;
+    }
+    if (d == DOT_LAST_COMPARE) {
+      p.ly_compare = 0;
+      stat_update();
+    }
+    return;
+  }
+  if (d == DOT_VBLANK_COMPARE) {
+    p.ly_compare = p.line;
+    stat_update();
+  } else if (d == DOT_VBLANK && p.line == LCD_HEIGHT) {
+    set_mode(MODE_VBLANK);
+    io_request(INT_VBLANK);
+    p.irq_mode = IRQ_OAM;
+    stat_update();
+    p.irq_mode = IRQ_VBLANK;
+    stat_update();
+    ++p.frames;
+    host_frame();
+  }
+}
+
+static void dot(void) {
+  if (p.drawing) {
+    pixels_dot();
+  } else if (p.line < LCD_HEIGHT) {
+    line_dot();
+  } else {
+    vblank_dot();
+  }
+  if (++p.dot < LINE_CYCLES) {
+    return;
+  }
+  p.dot = 0;
+  p.first_line = 0;
+  p.late = 0;
+  if (p.drawing) {
+    /* never, short of a line with more to fetch than there's time for */
+    drawing_end();
+  }
+  if (++p.line == LCD_LINES) {
+    p.line = 0;
+    p.window_line = WINDOW_LINE_NONE;
+    p.wy_triggered = 0;
+  }
+}
+
+static void register_set(uint16_t address, uint8_t value, int lead);
+
+void video_tick(uint32_t cycles) {
+  for (; cycles > 0; --cycles) {
+    if (p.latch_dots && --p.latch_dots == 0) {
+      register_set(p.latch_address, p.latch_value, 1);
+    }
+    if (IO_REG(IO_LCDC) & LCDC_ENABLE) {
+      dot();
+    }
+    p.wx_changed = 0;
+  }
 }
 
 /* the whole screen one shade, on a DMG, or one color */
@@ -566,7 +1092,7 @@ static void fill(uint8_t shade, uint16_t color) {
   }
   for (int y = 0; y < LCD_HEIGHT; ++y) {
     for (int x = 0; x < LCD_WIDTH; ++x) {
-      frame[y][x] = value;
+      p.frame[y][x] = value;
     }
   }
 }
@@ -582,15 +1108,29 @@ void video_stop(void) {
   }
 }
 
-static void lcd_switch(uint8_t on) {
-  line_cycles = 0;
+/* The LCD comes on partway into a line 0 that has no OAM scan and shows mode 0 until its drawing, which is late; */
+/* lead is how many dots of the write's M-cycle are still to run. */
+static void lcd_on(int lead) {
+  p.line = 0;
+  p.dot = FIRST_LINE_DOT - lead;
+  p.first_line = 1;
+  p.late = FIRST_LINE_LATE;
+  p.hblank_dot = NO_DOT;
+  p.objects = 0;
+  p.ly_compare = 0;
+  p.irq_mode = IRQ_NONE;
+  stat_update();
+}
+
+static void lcd_off(void) {
+  video_blank();
   IO_REG(IO_LY) = 0;
-  if (on) {
-    start_line();
-  } else {
-    video_blank();
-    set_mode(MODE_HBLANK);
-  }
+  set_mode(MODE_HBLANK);
+  lock(0);
+  p.line = 0;
+  p.drawing = 0;
+  p.window_line = WINDOW_LINE_NONE;
+  p.wy_triggered = 0;
 }
 
 /* each bit of a nibble twice: 4 pixels of the logo as 8 */
@@ -632,34 +1172,31 @@ static void load_logo(void) {
 }
 
 void video_reset(void) {
-  memset(frame, 0, sizeof(frame));
-  memset(bg_palettes, 0, sizeof(bg_palettes));
-  memset(obj_palettes, 0, sizeof(obj_palettes));
-  frames = 0;
-  vram_bank = 0;
-  hdma_source = 0;
-  hdma_dest = 0;
-  hdma_blocks = 0;
-  hdma_status = HDMA_IDLE;
-  line_cycles = 0;
-  spare_cycles = 0;
-  window_line = 0;
-  window_triggered = 0;
-  stat_signal = 0;
+  memset(&p, 0, sizeof(p));
+  p.hdma_status = HDMA_IDLE;
+  p.hblank_dot = NO_DOT;
+  p.irq_mode = IRQ_NONE;
+  p.window_line = WINDOW_LINE_NONE;
 }
 
-/* the screen as the boot ROM leaves it */
+/* The screen as the boot ROM leaves it, with the LCD on and a little way into the OAM scan of a line 0. */
 void video_bios_init(void) {
+  IO_REG(IO_LCDC) = LCDC_ENABLE;
+  IO_REG(IO_STAT) = MODE_OAM_SCAN;
+  p.dot = BOOT_DOT;
+  p.ly_compare = 0;
+  p.oam_read_locked = 1;
+  p.oam_write_locked = 1;
   if (!cgb) {
     load_logo();
     return;
   }
-  memset(bg_palettes, BYTE_MASK, sizeof(bg_palettes)); /* white */
-  memset(obj_palettes, BYTE_MASK, sizeof(obj_palettes));
+  memset(p.bg_palettes, BYTE_MASK, sizeof(p.bg_palettes)); /* white */
+  memset(p.obj_palettes, BYTE_MASK, sizeof(p.obj_palettes));
   if (cgb && !cgb_mode) {
-    set_palette(bg_palettes, 0, compat_background);
-    set_palette(obj_palettes, 0, compat_objects);
-    set_palette(obj_palettes, 1, compat_objects);
+    set_palette(p.bg_palettes, 0, compat_background);
+    set_palette(p.obj_palettes, 0, compat_objects);
+    set_palette(p.obj_palettes, 1, compat_objects);
   }
   video_blank();
 }
@@ -686,21 +1223,21 @@ uint8_t video_read(uint16_t address) {
       }
       return IO_REG(IO_LY);
     case IO_VBK:
-      return VBK_UNUSED | vram_bank;
+      return VBK_UNUSED | p.vram_bank;
     case IO_HDMA1:
     case IO_HDMA2:
     case IO_HDMA3:
     case IO_HDMA4:
       return BYTE_MASK; /* write-only */
     case IO_HDMA5:
-      return hdma_status;
+      return p.hdma_status;
     case IO_BCPS:
     case IO_OCPS:
       return IO_REG(address) | PALETTE_SPEC_UNUSED;
     case IO_BCPD:
-      return bg_palettes[IO_REG(IO_BCPS) & PALETTE_INDEX];
+      return p.bg_palettes[IO_REG(IO_BCPS) & PALETTE_INDEX];
     case IO_OCPD:
-      return obj_palettes[IO_REG(IO_OCPS) & PALETTE_INDEX];
+      return p.obj_palettes[IO_REG(IO_OCPS) & PALETTE_INDEX];
     case IO_OPRI:
       return IO_REG(IO_OPRI) | OPRI_UNUSED;
     default:
@@ -708,55 +1245,118 @@ uint8_t video_read(uint16_t address) {
   }
 }
 
-void video_write(uint16_t address, uint8_t value) {
-  uint8_t switched;
+static void lcdc_set(uint8_t value, int lead) {
+  uint8_t old = IO_REG(IO_LCDC);
+  IO_REG(IO_LCDC) = value;
+  if ((old ^ value) & LCDC_ENABLE) {
+    if (value & LCDC_ENABLE) {
+      lcd_on(lead);
+    } else {
+      lcd_off();
+    }
+  }
+  /* DMG: objects switched off partway through fetching one, which stops there */
+  if ((old & ~value & LCDC_OBJ_ENABLE) && !cgb && p.obj_step != OBJ_NONE && p.obj_step != OBJ_HIGH) {
+    p.obj_step = OBJ_ABORTED;
+    p.obj_wait = 0;
+  }
+  if (!(value & LCDC_WIN_ENABLE)) {
+    p.window = 0;
+  }
+}
+
+/* A register takes its new value, with lead dots of the write's M-cycle still to run. */
+static void register_set(uint16_t address, uint8_t value, int lead) {
   switch (address) {
     case IO_LCDC:
-      switched = (value ^ IO_REG(IO_LCDC)) & LCDC_ENABLE;
-      IO_REG(IO_LCDC) = value;
-      if (switched) {
-        lcd_switch(value & LCDC_ENABLE);
-      }
+      lcdc_set(value, lead);
       break;
     case IO_STAT:
       IO_REG(IO_STAT) = (IO_REG(IO_STAT) & ~STAT_WRITABLE) | (value & STAT_WRITABLE);
-      update_stat();
+      stat_update();
       break;
     case IO_LY:
       /* read-only */
       break;
     case IO_LYC:
       IO_REG(IO_LYC) = value;
-      if (IO_REG(IO_LCDC) & LCDC_ENABLE) {
-        compare_lyc();
-      }
+      stat_update();
+      break;
+    case IO_WX:
+      IO_REG(IO_WX) = value;
+      p.wx_changed = 1;
       break;
     case IO_VBK:
-      vram_bank = value & 1;
+      p.vram_bank = value & 1;
       break;
     case IO_HDMA1:
-      hdma_source = (hdma_source & BYTE_MASK) | value << BYTE_BITS;
+      p.hdma_source = (p.hdma_source & BYTE_MASK) | value << BYTE_BITS;
       break;
     case IO_HDMA2:
-      hdma_source = (hdma_source & ~BYTE_MASK) | (value & HDMA_SOURCE);
+      p.hdma_source = (p.hdma_source & ~BYTE_MASK) | (value & HDMA_SOURCE);
       break;
     case IO_HDMA3:
-      hdma_dest = ((hdma_dest & BYTE_MASK) | value << BYTE_BITS) & HDMA_DEST;
+      p.hdma_dest = ((p.hdma_dest & BYTE_MASK) | value << BYTE_BITS) & HDMA_DEST;
       break;
     case IO_HDMA4:
-      hdma_dest = ((hdma_dest & ~BYTE_MASK) | value) & HDMA_DEST;
+      p.hdma_dest = ((p.hdma_dest & ~BYTE_MASK) | value) & HDMA_DEST;
       break;
     case IO_HDMA5:
       hdma_start(value);
       break;
     case IO_BCPD:
-      palette_write(bg_palettes, IO_BCPS, value);
+      palette_write(p.bg_palettes, IO_BCPS, value);
       break;
     case IO_OCPD:
-      palette_write(obj_palettes, IO_OCPS, value);
+      palette_write(p.obj_palettes, IO_OCPS, value);
       break;
     default:
       IO_REG(address) = value;
       break;
   }
+}
+
+/* A DMG's registers that the pixels go through take a write in two halves, a dot apart: the palettes are the old */
+/* and new values OR'd together for the first, and LCDC changes only by its background bit coming on. */
+static int write_is_split(uint16_t address) {
+  return !cgb && (address == IO_LCDC || address == IO_BGP || address == IO_OBP0 || address == IO_OBP1);
+}
+
+/* How many dots before the end of its M-cycle a write to this register lands: the bus holds that many back. */
+uint32_t video_write_lead(uint16_t address) {
+  if (cgb) {
+    return 0;
+  }
+  if (write_is_split(address)) {
+    return SPLIT_WRITE_LEAD;
+  }
+  if (address == IO_SCY || address == IO_SCX) {
+    return SCROLL_WRITE_LEAD;
+  }
+  return 0;
+}
+
+void video_write(uint16_t address, uint8_t value) {
+  if (p.latch_dots) {
+    /* writes can't really come this close together: finish the last */
+    p.latch_dots = 0;
+    register_set(p.latch_address, p.latch_value, 0);
+  }
+  if (!write_is_split(address)) {
+    register_set(address, value, 0);
+    return;
+  }
+  uint8_t first = IO_REG(address) | value;
+  if (address == IO_LCDC) {
+    uint8_t old = IO_REG(IO_LCDC);
+    /* with the first pixel about to go, objects are switched off a dot sooner */
+    if (p.drawing && p.x == 0 && !(value & LCDC_OBJ_ENABLE)) {
+      old &= ~LCDC_OBJ_ENABLE;
+    }
+    first = old | (value & LCDC_BG_ENABLE);
+  }
+  register_set(address, first, SPLIT_WRITE_LEAD);
+  p.latch_address = address;
+  p.latch_value = value;
+  p.latch_dots = SPLIT_WRITE_LEAD;
 }

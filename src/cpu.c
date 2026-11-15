@@ -35,6 +35,13 @@ uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
 /* T-cycles of the current step the bus has already run */
 static uint32_t bus_cycles = 0;
 
+enum {
+  BUS_LOCKED = 0xFF, /* what a read of VRAM or OAM gets while the PPU has it */
+};
+
+/* interrupts raised too late in a halted M-cycle for the CPU to wake at the end of it */
+static uint8_t halt_missed = 0;
+
 /* T-cycles the PPU has still to run. It's kept up to an M-cycle behind the rest, and caught up before anything looks */
 /* at it, so that a write to one of its registers can land partway through the M-cycle before, as the real ones do. */
 static uint32_t video_owed = 0;
@@ -64,6 +71,8 @@ uint8_t bus_read(uint16_t address) {
   bus_sync();
   if (io_dma_conflict(address)) {
     value = io_dma_read(address);
+  } else if (video_locked(address, 0)) {
+    value = BUS_LOCKED;
   } else {
     value = mem_read(address);
   }
@@ -72,9 +81,16 @@ uint8_t bus_read(uint16_t address) {
   return value;
 }
 
+/* A write to one of the PPU's registers can land before the end of the M-cycle before it: the PPU is caught up only */
+/* to there, and runs the rest with the new value. */
 void bus_write(uint16_t address, uint8_t value) {
-  bus_sync();
-  if (!io_dma_conflict(address)) {
+  uint32_t lead = video_write_lead(address);
+  if (lead > video_owed) {
+    lead = video_owed;
+  }
+  video_tick(video_owed - lead);
+  video_owed = lead;
+  if (!io_dma_conflict(address) && !video_locked(address, 1)) {
     mem_write(address, value);
   }
   run_machine(M_CYCLE);
@@ -85,6 +101,18 @@ void bus_write(uint16_t address, uint8_t value) {
 void bus_idle(void) {
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
+}
+
+/* An M-cycle of HALT. The halted CPU looks for interrupts halfway through it, so one the PPU raises in the second */
+/* half doesn't wake it until the next. */
+static void halt_cycle(void) {
+  uint8_t before;
+  run_machine(M_CYCLE);
+  video_tick(video_owed / 2);
+  before = IO_REG(IO_IF);
+  video_tick(video_owed - video_owed / 2);
+  video_owed = 0;
+  halt_missed = IO_REG(IO_IF) & ~before;
 }
 
 void NOP(void) {}
@@ -217,6 +245,10 @@ static const uint16_t interrupt_vector[5] = {
 /* Wake from HALT on any pending interrupt; with IME set, jump to the highest-priority one. */
 static void cpu_interrupt(void) {
   uint8_t pending = IO_REG(IO_IF) & io_ie & INT_ALL;
+  if (halted) {
+    pending &= ~halt_missed;
+  }
+  halt_missed = 0;
   if (!pending) {
     return;
   }
@@ -268,7 +300,9 @@ uint32_t step(void) {
   bus_cycles = 0;
   cpu_interrupt();
   if (halted) {
+    halt_cycle();
     cycle_counter += M_CYCLE;
+    bus_cycles = M_CYCLE;
   } else {
     uint8_t op = rpc8_ext();
     if (halt_bug) {
@@ -331,6 +365,7 @@ int cpu_bios_init(void) {
   cycle_counter = 0;
   bus_cycles = 0;
   video_owed = 0;
+  halt_missed = 0;
 
   io_bios_init();           // DIV
   mem_write(0xFF05, 0x00);  // TIMA
