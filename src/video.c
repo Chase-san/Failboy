@@ -268,8 +268,9 @@ struct ppu {
   uint8_t object_index[OBJ_PER_LINE];
 
   /* the pixels */
-  int16_t x;     /* the next to come out of the FIFO: negative ones are thrown away */
-  uint8_t lcd_x; /* where the LCD puts it, which the window can knock out of step */
+  int16_t x;        /* the next to come out of the FIFO: negative ones are thrown away */
+  uint8_t lcd_x;    /* where the LCD puts it, which the window can knock out of step */
+  uint8_t scrolled; /* SCX's low 3 bits, as many pixels as were thrown away for them */
   uint8_t fetch_step;
   uint8_t fetch_y; /* CGB: the row, as it was for the tile's index */
   uint8_t tile;
@@ -555,7 +556,8 @@ static void fetch_tile(void) {
     if (p.x < X_SCROLLED) {
       column = IO_REG(IO_SCX) / TILE_SIZE;
     } else {
-      column = ((IO_REG(IO_SCX) + p.x + TILE_SIZE) / TILE_SIZE) & MAP_MASK;
+      /* SCX's high 5 bits are read for each tile; its low 3 only count as they were when the scroll was done */
+      column = (IO_REG(IO_SCX) / TILE_SIZE + (p.scrolled + p.x + TILE_SIZE) / TILE_SIZE) & MAP_MASK;
     }
   }
   p.fetch_y = fetch_row();
@@ -591,7 +593,7 @@ static void fetch_push(void) {
     return;
   }
   /* DMG: with the window switched off after its line has come, a blank pixel goes in where it would have started */
-  if (p.wy_triggered && !(IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && !cgb) {
+  if (p.wy_triggered && !(IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && !cgb && !p.window_fetching) {
     int wx = 0;
     if (p.x + WX_OFFSET >= 0) {
       wx = p.x + WX_OFFSET;
@@ -797,11 +799,9 @@ static int window_check(void) {
       if (wx == p.x + WX_OFFSET) {
         start = 1;
       } else if (wx == p.x + WX_OFFSET - 1 && !p.wx_changed) {
-        /* A pixel late for the comparison, it still starts, and a DMG's LCD loses step with the PPU by a pixel. */
+        /* A pixel late for the comparison (the window only just switched on, say), it still starts. On some DMGs */
+        /* the LCD then loses step with the PPU by a pixel; not on the ones mealybug's pictures are from. */
         start = 1;
-        if (!cgb && p.lcd_x > 0) {
-          --p.lcd_x;
-        }
       }
     }
     if (start) {
@@ -859,8 +859,10 @@ static void pixel_pop(void) {
     uint8_t scroll = IO_REG(IO_SCX) & TILE_ROW_MASK;
     if ((p.x & TILE_ROW_MASK) == scroll) {
       p.x = X_SCROLLED;
+      p.scrolled = scroll;
     } else if (p.window_fetching && (p.x & TILE_ROW_MASK) == TILE_ROW_MASK - 1 && scroll == TILE_ROW_MASK) {
       p.x = X_SCROLLED;
+      p.scrolled = scroll;
     } else if (p.x == X_SCROLLED - 1) {
       p.x = X_START;
       return;
@@ -899,6 +901,7 @@ static void pixels_start(void) {
   p.drawing = 1;
   p.x = X_START;
   p.lcd_x = 0;
+  p.scrolled = 0;
   p.fetch_step = 0;
   /* a tile's worth of nothing to start with, which only takes time */
   p.bg_low = p.bg_high = p.bg_attr = 0;
@@ -1255,11 +1258,6 @@ static void lcdc_set(uint8_t value, int lead) {
       lcd_off();
     }
   }
-  /* DMG: objects switched off partway through fetching one, which stops there */
-  if ((old & ~value & LCDC_OBJ_ENABLE) && !cgb && p.obj_step != OBJ_NONE && p.obj_step != OBJ_HIGH) {
-    p.obj_step = OBJ_ABORTED;
-    p.obj_wait = 0;
-  }
   if (!(value & LCDC_WIN_ENABLE)) {
     p.window = 0;
   }
@@ -1316,8 +1314,9 @@ static void register_set(uint16_t address, uint8_t value, int lead) {
   }
 }
 
-/* A DMG's registers that the pixels go through take a write in two halves, a dot apart: the palettes are the old */
-/* and new values OR'd together for the first, and LCDC changes only by its background bit coming on. */
+/* A DMG's registers that the pixels go through take a write in two halves, a dot apart. The palettes are the old */
+/* and new values OR'd together for the first. LCDC waits for the second, but an object's fetch sees objects switched */
+/* off in the first, and with the first pixel about to go, so do the pixels, for objects and the background both. */
 static int write_is_split(uint16_t address) {
   return !cgb && (address == IO_LCDC || address == IO_BGP || address == IO_OBP0 || address == IO_OBP1);
 }
@@ -1346,14 +1345,18 @@ void video_write(uint16_t address, uint8_t value) {
     register_set(address, value, 0);
     return;
   }
-  uint8_t first = IO_REG(address) | value;
+  uint8_t old = IO_REG(address);
+  uint8_t first = old | value;
   if (address == IO_LCDC) {
-    uint8_t old = IO_REG(IO_LCDC);
-    /* with the first pixel about to go, objects are switched off a dot sooner */
-    if (p.drawing && p.x == 0 && !(value & LCDC_OBJ_ENABLE)) {
-      old &= ~LCDC_OBJ_ENABLE;
+    first = old;
+    if (p.drawing && p.x == 0) {
+      first &= value | ~(LCDC_OBJ_ENABLE | LCDC_BG_ENABLE);
     }
-    first = old | (value & LCDC_BG_ENABLE);
+    /* objects switched off partway through fetching one, which stops there */
+    if ((old & ~value & LCDC_OBJ_ENABLE) && p.drawing && p.obj_step != OBJ_NONE && p.obj_step != OBJ_HIGH) {
+      p.obj_step = OBJ_ABORTED;
+      p.obj_wait = 0;
+    }
   }
   register_set(address, first, SPLIT_WRITE_LEAD);
   p.latch_address = address;
