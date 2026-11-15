@@ -69,6 +69,7 @@ enum {
   WIDEN_SHIFT = 8 - COMPONENT_BITS, /* and its top bits repeated below */
 };
 
+static const char UNSUPPORTED_MODE[] = "sgb"; /* a --mode the core can't be yet */
 static const char SAVE_EXTENSION[] = ".sav";
 static const char RTC_EXTENSION[] = ".rtc";
 
@@ -81,11 +82,6 @@ static const struct {
     {"dmg", GB_DMG_AUTO},
     {"cgb", GB_CGB_AUTO},
     {"cgbfb", GB_CGB_AUTO}, /* once a mode of its own; a cgb falls back by itself now */
-    {"sgb", GB_SGB_AUTO},
-    /* consoles the core can't be yet */
-    {"mgb", GB_MGB_AUTO},
-    {"sgb2", GB_SGB2_AUTO},
-    {"agb", GB_AGB_AUTO},
 };
 
 /* --doctor: a Gameboy Doctor trace on stdout, which moves serial output to stderr */
@@ -122,8 +118,7 @@ static int usage(const char *name) {
   fprintf(stderr, "         auto  select based on the game\n");
   fprintf(stderr, "         dmg   original gameboy\n");
   fprintf(stderr, "         cgb   color gameboy, which runs an original gameboy game in its fallback mode\n");
-  fprintf(stderr,
-          "         mgb, sgb, sgb2, agb   gameboy pocket, super gameboy (and 2), advance (all unimplemented)\n");
+  fprintf(stderr, "         sgb   super gameboy (unimplemented)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image (a PPM for a Game Boy Color)\n");
@@ -320,8 +315,7 @@ static int run_window(struct gb *gb, uint64_t limit, int rslcd) {
 }
 
 /* why gb_create() wouldn't */
-static void report(enum gb_error error, const char *filename, const char *mode, const uint8_t *rom,
-                   unsigned int rom_size) {
+static void report(enum gb_error error, const char *filename, const uint8_t *rom, unsigned int rom_size) {
   switch (error) {
     case GB_ERROR_ROM:
       fprintf(stderr, "failboy: '%s' isn't a Game Boy ROM (size %u)\n", filename, rom_size);
@@ -329,9 +323,6 @@ static void report(enum gb_error error, const char *filename, const char *mode, 
     case GB_ERROR_CARTRIDGE:
       fprintf(stderr, "failboy: '%s' uses cartridge type %02X, which isn't supported yet\n", filename,
               rom[HEADER_CART_TYPE]);
-      break;
-    case GB_ERROR_REVISION:
-      fprintf(stderr, "failboy: %s mode isn't supported yet\n", mode);
       break;
     case GB_ERROR_MEMORY:
       fprintf(stderr, "failboy: out of memory\n");
@@ -364,7 +355,12 @@ int main(int argc, char *argv[]) {
       rslcd = 1;
 #endif
     } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
-      mode = find_mode(argv[++i]);
+      ++i;
+      if (strcmp(argv[i], UNSUPPORTED_MODE) == 0) {
+        fprintf(stderr, "failboy: %s mode isn't supported yet\n", UNSUPPORTED_MODE);
+        return EXIT_ERROR;
+      }
+      mode = find_mode(argv[i]);
       if (mode < 0) {
         return usage(argv[0]);
       }
@@ -422,7 +418,7 @@ int main(int argc, char *argv[]) {
   struct gb *gb = NULL;
   enum gb_error error = gb_create(&config, &gb);
   if (error != GB_OK) {
-    report(error, filename, modes[mode].name, rom, rom_size);
+    report(error, filename, rom, rom_size);
     free(rom);
     return EXIT_ERROR;
   }

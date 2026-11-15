@@ -49,28 +49,8 @@ enum {
 /* gb.c */
 extern int doctor; /* being as Gameboy Doctor's logs expect */
 
-/* The machine emulated: its console in the high nibble, the revision of that console's CPU in the low one. Hosts */
-/* only get to ask for a console (failboy.h's gb_revision); this is the one that was picked for them. */
-enum {
-  REVISION_DMG_0 = 0x00, /* the original Game Boy */
-  REVISION_DMG_A,
-  REVISION_DMG_B,
-  REVISION_DMG_C,
-  REVISION_MGB = 0x10,   /* Game Boy Pocket */
-  REVISION_SGB = 0x20,   /* Super Game Boy */
-  REVISION_SGB2 = 0x30,  /* Super Game Boy 2 */
-  REVISION_CGB_0 = 0x40, /* Game Boy Color */
-  REVISION_CGB_A,
-  REVISION_CGB_B,
-  REVISION_CGB_C,
-  REVISION_CGB_D,
-  REVISION_CGB_E,
-  REVISION_AGB = 0x50,     /* a Game Boy Advance, being a Game Boy Color */
-  REVISION_CONSOLE = 0xF0, /* the bits that say which console */
-};
-
-extern int revision;
-extern uint8_t cgb; /* it's a Game Boy Color */
+extern int revision; /* the machine emulated: a gb_hardware */
+extern uint8_t cgb;  /* it's a Game Boy Color */
 extern uint8_t
     cgb_mode; /* and running a color game, so all it adds is switched on; if not, it's in compatibility mode */
 
@@ -84,11 +64,11 @@ int64_t host_clock(void);                      /* Unix time, or 0 */
 /* cart.c */
 enum gb_error cart_load(const uint8_t *, uint32_t); /* the ROM stays the caller's */
 void cart_free(void);
-void cart_reset(void);         /* the mapper as the power coming on leaves it; RAM without a battery is cleared */
-uint8_t *cart_ram(uint32_t *); /* all of the cartridge's RAM, and its size; NULL if it has none */
-int cart_cgb(void);            /* the header says the game can use a Game Boy Color */
-unsigned int cart_battery_ram_size(void);                   /* 0 unless the cartridge RAM has a battery */
-void cart_read_battery_ram(uint8_t *, unsigned int);        /* copies the battery RAM out, to save it */
+void cart_reset(int); /* the mapper as the power coming on leaves it; and if set, RAM with no battery cleared */
+uint8_t *cart_ram(uint32_t *);                       /* all of the cartridge's RAM, and its size; NULL if it has none */
+int cart_cgb(void);                                  /* the header says the game can use a Game Boy Color */
+unsigned int cart_battery_ram_size(void);            /* 0 unless the cartridge RAM has a battery */
+void cart_read_battery_ram(uint8_t *, unsigned int); /* copies the battery RAM out, to save it */
 void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
 
 /* the MBC3's clock */
@@ -214,7 +194,7 @@ enum {
   HRAM_SIZE = 0x7F,
 };
 
-void mem_reset(void);        /* all of it zeros */
+void mem_reset(int);         /* VRAM cleared, as the boot ROM does; and if set, all the rest */
 void mem_wram_bank(uint8_t); /* CGB: the bank at D000-DFFF */
 uint8_t *mem_wram(void);     /* all WRAM_BANKS of it */
 uint8_t *mem_hram(void);

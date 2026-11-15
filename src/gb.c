@@ -31,21 +31,14 @@ struct gb {
 static struct gb gb_only;
 
 int doctor = 0;
-int revision = REVISION_DMG_B;
+int revision = GB_HARDWARE_DMG_B;
 uint8_t cgb = 0;
 uint8_t cgb_mode = 0;
 
-/* The revision the core is, for each console a host can ask for, and whether it can be it yet. */
-static const struct {
-  int revision;
-  int supported;
-} consoles[GB_REVISIONS] = {
-    [GB_DMG_AUTO] = {REVISION_DMG_B, 1},  //
-    [GB_MGB_AUTO] = {REVISION_MGB, 0},    //
-    [GB_SGB_AUTO] = {REVISION_SGB, 0},    //
-    [GB_SGB2_AUTO] = {REVISION_SGB2, 0},  //
-    [GB_CGB_AUTO] = {REVISION_CGB_E, 1},  //
-    [GB_AGB_AUTO] = {REVISION_AGB, 0},    //
+/* the revision the core is, for each console a host can ask for */
+static const int hardware[GB_REVISIONS] = {
+    [GB_DMG_AUTO] = GB_HARDWARE_DMG_B,
+    [GB_CGB_AUTO] = GB_HARDWARE_CGB_E,
 };
 
 /* **************************************** */
@@ -89,9 +82,9 @@ int64_t host_clock(void) {
 
 /* The power comes on: every module back to how it starts, then as the boot ROM leaves it. Returns 0 if the CPU's */
 /* flags are laid out wrongly (see cpu_bios_init()). */
-static int power_on(void) {
-  mem_reset();
-  cart_reset();
+static int power_on(int clear_ram) {
+  mem_reset(clear_ram);
+  cart_reset(clear_ram);
   io_reset();
   video_reset();
   audio_reset();
@@ -122,18 +115,13 @@ enum gb_error gb_create(const struct gb_config *config, struct gb **gb) {
       console = GB_CGB_AUTO;
     }
   }
-  if (!consoles[console].supported) {
-    cart_free();
-    return GB_ERROR_REVISION;
-  }
-  revision = consoles[console].revision;
-  int kind = revision & REVISION_CONSOLE;
-  cgb = kind == REVISION_CGB_0 || kind == REVISION_AGB;
+  revision = hardware[console];
+  cgb = (revision & GB_CONSOLE) == GB_CONSOLE_CGB;
   /* a Game Boy Color runs an original Game Boy's game in its compatibility mode */
   cgb_mode = cgb && cart_cgb();
   doctor = config->doctor != 0;
 
-  if (!power_on()) {
+  if (!power_on(1)) {
     cart_free();
     return GB_ERROR_BUILD;
   }
@@ -150,12 +138,17 @@ void gb_destroy(struct gb *gb) {
   cart_free();
 }
 
-void gb_reset(struct gb *gb) {
+void gb_reset(struct gb *gb, int clear_ram) {
   (void)gb;
-  power_on();
+  power_on(clear_ram);
 }
 
 struct gb_host *gb_host(struct gb *gb) { return &gb->host; }
+
+enum gb_hardware gb_hardware(const struct gb *gb) {
+  (void)gb;
+  return (enum gb_hardware)revision;
+}
 
 enum gb_pixel_format gb_pixel_format(const struct gb *gb) {
   (void)gb;

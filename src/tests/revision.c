@@ -13,8 +13,8 @@
  * GNU General Public License for more details.
  */
 
-/* The revision the core settles on for what a host asks for. This one looks inside the core (core.h), where the */
-/* others keep to failboy.h. */
+/* The hardware the core settles on for what a host asks for, as the host is told it (gb_hardware()) and as the */
+/* modules see it. This one looks inside the core (core.h), where the others keep to failboy.h. */
 
 #include <stdlib.h>
 
@@ -22,44 +22,35 @@
 #include "tests/test.h"
 
 /* what the core should be for a host's choice of console, with a color game in or not */
-static void test_choice(enum gb_revision asked, int color_game, int expect_revision, int expect_cgb_mode) {
+static void test_choice(enum gb_revision asked, int color_game, enum gb_hardware expect, int expect_cgb_mode) {
   uint8_t *rom = test_rom(TEST_ROM_SIZE, 0, 0);
   if (color_game) {
     rom[TEST_HEADER_CGB] = TEST_HEADER_CGB_GAME;
   }
   struct gb *gb = test_boot(asked, rom, TEST_ROM_SIZE, NULL);
-  CHECK(revision == expect_revision);
-  CHECK(cgb == ((expect_revision & REVISION_CONSOLE) == REVISION_CGB_0));
+  CHECK(gb_hardware(gb) == expect);
+  CHECK(revision == (int)expect);
+  CHECK(cgb == ((expect & GB_CONSOLE) == GB_CONSOLE_CGB));
   CHECK(cgb_mode == expect_cgb_mode);
+  if (cgb) {
+    CHECK(gb_pixel_format(gb) == GB_PIXELS_COLORS);
+  } else {
+    CHECK(gb_pixel_format(gb) == GB_PIXELS_SHADES);
+  }
   gb_destroy(gb);
   free(rom);
 }
 
 int main(void) {
-  /* a console's revisions share its high nibble */
-  CHECK((REVISION_DMG_C & REVISION_CONSOLE) == REVISION_DMG_0);
-  CHECK((REVISION_CGB_E & REVISION_CONSOLE) == REVISION_CGB_0);
-  CHECK((REVISION_MGB & REVISION_CONSOLE) != (REVISION_DMG_0 & REVISION_CONSOLE));
+  /* the console is the high nibble */
+  CHECK((GB_HARDWARE_DMG_B & GB_CONSOLE) == GB_CONSOLE_DMG);
+  CHECK((GB_HARDWARE_CGB_E & GB_CONSOLE) == GB_CONSOLE_CGB);
 
-  test_choice(GB_AUTO, 0, REVISION_DMG_B, 0);
-  test_choice(GB_AUTO, 1, REVISION_CGB_E, 1);
-  test_choice(GB_DMG_AUTO, 0, REVISION_DMG_B, 0);
-  test_choice(GB_DMG_AUTO, 1, REVISION_DMG_B, 0); /* a color game that also runs on the original */
-  test_choice(GB_CGB_AUTO, 1, REVISION_CGB_E, 1);
-  test_choice(GB_CGB_AUTO, 0, REVISION_CGB_E, 0); /* compatibility mode */
-
-  /* the consoles it can't be yet */
-  static const enum gb_revision unsupported[] = {GB_MGB_AUTO, GB_SGB_AUTO, GB_SGB2_AUTO, GB_AGB_AUTO};
-
-  uint8_t *rom = test_rom(TEST_ROM_SIZE, 0, 0);
-  for (size_t i = 0; i < sizeof(unsupported) / sizeof(unsupported[0]); ++i) {
-    struct gb_config config = {0};
-    struct gb *gb = NULL;
-    config.revision = unsupported[i];
-    config.rom = rom;
-    config.rom_size = TEST_ROM_SIZE;
-    CHECK(gb_create(&config, &gb) == GB_ERROR_REVISION);
-  }
-  free(rom);
+  test_choice(GB_AUTO, 0, GB_HARDWARE_DMG_B, 0);
+  test_choice(GB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
+  test_choice(GB_DMG_AUTO, 0, GB_HARDWARE_DMG_B, 0);
+  test_choice(GB_DMG_AUTO, 1, GB_HARDWARE_DMG_B, 0); /* a color game that also runs on the original */
+  test_choice(GB_CGB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
+  test_choice(GB_CGB_AUTO, 0, GB_HARDWARE_CGB_E, 0); /* compatibility mode */
   return test_result("revision");
 }

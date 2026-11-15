@@ -46,24 +46,34 @@ enum {
 };
 
 /* The machine to be. A host picks the console, and the core picks which revision of it to be (they don't all */
-/* behave alike): the usual one. Asking for an exact revision will come once the core can tell them apart. So far */
-/* it can be GB_DMG_AUTO or GB_CGB_AUTO; gb_create() refuses the rest. */
+/* behave alike): the usual one, which gb_hardware() tells. More consoles, and asking for an exact revision, will */
+/* come as the core learns to be them. */
 enum gb_revision {
-  GB_AUTO,      /* what the cartridge's header asks for: GB_CGB_AUTO for a color game, GB_DMG_AUTO for any other */
-  GB_DMG_AUTO,  /* the original Game Boy */
-  GB_MGB_AUTO,  /* Game Boy Pocket */
-  GB_SGB_AUTO,  /* Super Game Boy */
-  GB_SGB2_AUTO, /* Super Game Boy 2 */
-  GB_CGB_AUTO,  /* Game Boy Color, which runs an original Game Boy's game in its compatibility mode */
-  GB_AGB_AUTO,  /* a Game Boy Advance, being a Game Boy Color */
+  GB_AUTO,     /* what the cartridge's header asks for: GB_CGB_AUTO for a color game, GB_DMG_AUTO for any other */
+  GB_DMG_AUTO, /* the original Game Boy */
+  GB_CGB_AUTO, /* Game Boy Color, which runs an original Game Boy's game in its compatibility mode */
   GB_REVISIONS,
+};
+
+/* The machine it is: the console in the high nibble, and the revision of that console's CPU in the low one, counted */
+/* from its first. Only what the core can be is here, which leaves gaps: there's a console every 0x10, in the order */
+/* they came out. */
+enum gb_hardware {
+  GB_HARDWARE_DMG_B = 0x02, /* the original Game Boy, whose CPUs were 0, A, B and C */
+  GB_HARDWARE_CGB_E = 0x45, /* Game Boy Color: 0, then A to E */
+};
+
+enum {
+  GB_CONSOLE = 0xF0, /* the bits of a gb_hardware that say which console */
+  GB_CONSOLE_DMG = 0x00,
+  GB_CONSOLE_CGB = 0x40,
 };
 
 enum gb_error {
   GB_OK,
   GB_ERROR_ROM,       /* not a Game Boy ROM: they come in 32 kB * 2^n */
   GB_ERROR_CARTRIDGE, /* a type of cartridge (header byte 0x147) that isn't supported yet */
-  GB_ERROR_REVISION,  /* a revision that isn't supported yet */
+  GB_ERROR_REVISION,  /* not one of gb_revision's */
   GB_ERROR_MEMORY,    /* out of it */
   GB_ERROR_BUSY,      /* there's a Game Boy already; see gb_create() */
   GB_ERROR_BUILD,     /* the compiler that built the core laid the CPU's flags out the wrong way round */
@@ -155,14 +165,17 @@ struct gb_config {
 enum gb_error gb_create(const struct gb_config *config, struct gb **gb);
 void gb_destroy(struct gb *gb);
 
-/* Switches it off and on again: everything as gb_create() left it, the counts of ticks and frames too, but for what */
-/* the cartridge's battery keeps, its RAM and its clock. Not from a callback. */
-void gb_reset(struct gb *gb);
+/* Switches it off and on again: everything as gb_create() left it, the counts of ticks and frames too, but for its */
+/* RAM. A flick of the real switch leaves that as it was, and so does this: work RAM, HRAM, OAM and the cartridge's */
+/* RAM keep what they held. With clear_ram they're zeros again, as after a long while off, all but what the */
+/* cartridge's battery keeps: its RAM, if it has one, and its clock. Not from a callback. */
+void gb_reset(struct gb *gb, int clear_ram);
 
 /* The callbacks it was made with, which can be changed: a tool that's handed a Game Boy can put its own in, and call */
 /* the ones it found there. */
 struct gb_host *gb_host(struct gb *gb);
 
+enum gb_hardware gb_hardware(const struct gb *gb); /* the one it is, which the core picked */
 enum gb_pixel_format gb_pixel_format(const struct gb *gb);
 
 /* Running. Each returns the ticks it ran for, which can be a few more than asked: an instruction is always finished. */

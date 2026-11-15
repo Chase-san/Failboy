@@ -47,10 +47,14 @@ uint8_t vram[VRAM_BANKS * VRAM_SIZE]; /* 8 kB of video RAM, or a CGB's 16 kB */
 /* where D000-DFFF is in wram: bank 1, unless a CGB picks another */
 static unsigned int wram_bank_offset = WRAM_BANK_SIZE;
 
-void mem_reset(void) {
-  memset(wram, 0, sizeof(wram));
-  memset(hram, 0, sizeof(hram));
-  memset(oam, 0, sizeof(oam));
+/* The power comes on. RAM keeps what it held through a short while off, unless clear says it was a long one; but */
+/* the boot ROM always clears VRAM. */
+void mem_reset(int clear) {
+  if (clear) {
+    memset(wram, 0, sizeof(wram));
+    memset(hram, 0, sizeof(hram));
+    memset(oam, 0, sizeof(oam));
+  }
   memset(vram, 0, sizeof(vram));
   wram_bank_offset = WRAM_BANK_SIZE;
 }

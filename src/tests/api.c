@@ -35,6 +35,7 @@ enum {
   ECHO_START = 0xE000,
   HRAM_START = 0xFF80,
   VRAM_START = 0x8000,
+  VRAM_TILES = 0x9000, /* tile data the boot ROM's logo doesn't use */
   CART_RAM_START = 0xA000,
   RAM_ENABLE = 0x0A,
   TIMER_VECTOR = 0x0050,
@@ -168,7 +169,7 @@ static void test_create(void) {
   config.rom_size = TEST_ROM_SIZE;
   CHECK(gb_create(&config, &gb) == GB_ERROR_ROM);
   config.rom = rom;
-  config.revision = GB_SGB_AUTO;
+  config.revision = GB_REVISIONS;
   CHECK(gb_create(&config, &gb) == GB_ERROR_REVISION && gb == NULL);
   config.revision = (enum gb_revision)REVISION_OUT_OF_RANGE;
   CHECK(gb_create(&config, &gb) == GB_ERROR_REVISION);
@@ -180,6 +181,7 @@ static void test_create(void) {
 
   /* none of those left anything behind */
   CHECK(gb_create(&config, &gb) == GB_OK && gb != NULL);
+  CHECK(gb_hardware(gb) == GB_HARDWARE_DMG_B);
   CHECK(gb_pixel_format(gb) == GB_PIXELS_SHADES);
   CHECK(gb_ticks(gb) == 0 && gb_frames(gb) == 0);
   CHECK(gb_create(&config, &second) == GB_ERROR_BUSY && second == NULL);
@@ -289,7 +291,7 @@ static void test_locked(void) {
   CHECK(gb_frames(gb) >= 1);
   gb_cpu(gb, &cpu);
   CHECK(cpu.locked && cpu.pc == TEST_ENTRY + 1);
-  gb_reset(gb);
+  gb_reset(gb, 0);
   gb_cpu(gb, &cpu);
   CHECK(!cpu.locked && cpu.pc == TEST_ENTRY);
   gb_destroy(gb);
@@ -306,7 +308,7 @@ static void test_same_again(const uint8_t *rom, uint32_t size, int frames) {
   struct gb *gb = test_boot(GB_AUTO, rom, size, &host);
   run(gb, frames, &first);
   CHECK(first.ticks > 0);
-  gb_reset(gb);
+  gb_reset(gb, 1);
   CHECK(gb_ticks(gb) == 0 && gb_frames(gb) == 0);
   run(gb, frames, &again);
   CHECK(same(&first, &again));
@@ -347,27 +349,43 @@ static void test_busy_same_again(void) {
   free(rom);
 }
 
-/* a reset keeps the cartridge's RAM only if it has a battery */
-static void test_reset_ram(uint8_t type, int kept) {
+/* A reset leaves RAM as it was, unless it's told to clear it, and then what has a battery still stays. */
+static void test_reset_ram(uint8_t type, int battery) {
   uint8_t *rom = test_rom(TEST_ROM_SIZE, type, RAM_8K);
   struct gb *gb = test_boot(GB_DMG_AUTO, rom, TEST_ROM_SIZE, NULL);
   uint32_t size = 0;
   uint8_t *ram = gb_memory(gb, GB_MEMORY_CART_RAM, &size);
   CHECK(ram != NULL && size == RAM_8K_SIZE);
+  uint8_t *oam = gb_memory(gb, GB_MEMORY_OAM, &size);
   CHECK(gb_read(gb, CART_RAM_START) == 0xFF); /* switched off */
   gb_write(gb, 0x0000, RAM_ENABLE);
   gb_write(gb, CART_RAM_START, 0x99);
   CHECK(ram[0] == 0x99 && gb_read(gb, CART_RAM_START) == 0x99);
-  if (kept) {
+  if (battery) {
     CHECK(gb_save_size(gb) == RAM_8K_SIZE);
   } else {
     CHECK(gb_save_size(gb) == 0);
   }
   gb_write(gb, WRAM_START, 0x11);
-  gb_reset(gb);
-  CHECK(gb_read(gb, WRAM_START) == 0);
+  gb_write(gb, HRAM_START, 0x22);
+  gb_write(gb, VRAM_TILES, 0x44);
+  oam[0] = 0x33;
+  gb_run(gb, GB_FRAME_TICKS);
+
+  gb_reset(gb, 0);
+  CHECK(gb_ticks(gb) == 0);
+  CHECK(gb_read(gb, WRAM_START) == 0x11);
+  CHECK(gb_read(gb, HRAM_START) == 0x22);
+  CHECK(oam[0] == 0x33);
+  CHECK(ram[0] == 0x99);
   CHECK(gb_read(gb, CART_RAM_START) == 0xFF); /* switched off again */
-  if (kept) {
+  CHECK(gb_read(gb, VRAM_TILES) == 0);        /* the boot ROM's doing */
+
+  gb_reset(gb, 1);
+  CHECK(gb_read(gb, WRAM_START) == 0);
+  CHECK(gb_read(gb, HRAM_START) == 0);
+  CHECK(oam[0] == 0);
+  if (battery) {
     CHECK(ram[0] == 0x99);
   } else {
     CHECK(ram[0] == 0);

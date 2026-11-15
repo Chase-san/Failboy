@@ -495,11 +495,11 @@ enum gb_error cart_load(const uint8_t *data, uint32_t rom_size) {
     rtc_reset();
   }
   cart_type = type;
-  cart_reset();
+  cart_reset(1);
   return GB_OK;
 }
 
-void cart_reset(void) {
+void cart_reset(int clear) {
   cart_mode = MODE_MODELESS;
   if (cart_type >= CART_MBC1 && cart_type <= CART_MBC1_RAM_BATT) {
     cart_mode = MODE_MBC1_16_8;
@@ -508,8 +508,8 @@ void cart_reset(void) {
   ram_bank = 0;
   /* with no MBC to switch the RAM on and off, it's always on */
   ram_enabled = cart_type == CART_ROM_RAM || cart_type == CART_ROM_RAM_BATT;
-  /* a clock runs on through it, and RAM keeps what it holds, if there's a battery */
-  if (ram != NULL && !battery) {
+  /* a clock runs on through it, and so does RAM with a battery, however long the power's off */
+  if (clear && ram != NULL && !battery) {
     memset(ram, 0, ram_size);
   }
 }
