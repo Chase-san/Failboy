@@ -55,3 +55,36 @@ if(FAILBOY_SDL)
 	target_link_libraries(failboy PRIVATE SDL3::SDL3)
 endif()
 
+
+# The spot tests in src/tests: each a program of its own, making the cartridges it needs.
+option(FAILBOY_TESTS "Build the spot tests and register them with CTest" ON)
+if(FAILBOY_TESTS)
+	enable_testing()
+	add_library(failboy_test STATIC src/tests/test.c)
+	target_link_libraries(failboy_test PUBLIC failboy_core)
+	set(test_targets failboy_test)
+	foreach(name api cart timer revision)
+		add_executable(test_${name} src/tests/${name}.c)
+		target_link_libraries(test_${name} PRIVATE failboy_test)
+		add_test(NAME ${name} COMMAND test_${name})
+		list(APPEND test_targets test_${name})
+	endforeach()
+	if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+		foreach(target IN LISTS test_targets)
+			target_compile_options(${target} PRIVATE -Wall -Wextra -pedantic)
+		endforeach()
+	endif()
+
+	# Where the shootout's test ROMs are (tests/roms, which isn't in the repository), some of them get the api test's
+	# check that a run comes out the same from a new Game Boy, a reset one, and one made after others.
+	set(same_again_roms "")
+	foreach(rom acid/dmg-acid2.gb acid/cgb-acid2.gbc blargg/instr_timing.gb blargg/dmg_sound/04-sweep.gb
+			mooneye/acceptance/oam_dma/basic.gb samesuite/dma/hdma_mode0.gb)
+		if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/roms/${rom}")
+			list(APPEND same_again_roms "${CMAKE_CURRENT_SOURCE_DIR}/tests/roms/${rom}")
+		endif()
+	endforeach()
+	if(same_again_roms)
+		add_test(NAME api_roms COMMAND test_api ${same_again_roms})
+	endif()
+endif()
