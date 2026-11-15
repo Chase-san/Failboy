@@ -25,11 +25,11 @@ enum {
   RSLCD_MAX_SCALE = 32,
 };
 
-/* Makes the screen show frame (LCD_WIDTH * LCD_HEIGHT shades) straight away, with no smearing from before. */
-void rslcd_reset(const uint8_t *frame);
+/* Makes the screen show frame (gb_pixels(), as GB_PIXELS_SHADES) straight away, with no smearing from before. */
+void rslcd_reset(const uint16_t *frame);
 
 /* Moves the screen one frame's worth towards showing frame. */
-void rslcd_frame(const uint8_t *frame);
+void rslcd_frame(const uint16_t *frame);
 
 /* Draws the screen as XRGB8888 at scale (1 to RSLCD_MAX_SCALE) output pixels per Game Boy pixel; pitch is in */
 /* pixels. */

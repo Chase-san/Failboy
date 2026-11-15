@@ -15,7 +15,7 @@
 
 #include <string.h>
 
-#include "failboy.h"
+#include "core.h"
 
 enum {
   LCDC_BG_ENABLE = 0x01, /* background and window; the DMG blanks both when off, a CGB game only their priority */
@@ -150,10 +150,8 @@ static const uint16_t compat_objects[PALETTE_COLORS] = {
     0x0000, /* black */
 };
 
-/* DMG: shades after the palettes, 0 (lightest) to 3 */
-static uint8_t framebuffer[LCD_HEIGHT][LCD_WIDTH];
-/* CGB: colors from the palettes */
-static uint16_t color_frame[LCD_HEIGHT][LCD_WIDTH];
+/* What shows. DMG: shades after the palettes, 0 (lightest) to 3. CGB: colors from the palettes. */
+static uint16_t frame[LCD_HEIGHT][LCD_WIDTH];
 static uint32_t frames = 0;
 
 /* CGB */
@@ -176,9 +174,7 @@ static uint8_t window_triggered = 0; /* LY has matched WY this frame */
 /* STAT's enabled interrupt conditions OR'd together; the interrupt fires when this rises. */
 static uint8_t stat_signal = 0;
 
-const uint8_t *video_framebuffer(void) { return &framebuffer[0][0]; }
-
-const uint16_t *video_colors(void) { return &color_frame[0][0]; }
+const uint16_t *video_pixels(void) { return &frame[0][0]; }
 
 uint32_t video_frames(void) { return frames; }
 
@@ -397,13 +393,8 @@ static void render_line(uint8_t ly) {
   uint8_t attrs[LCD_WIDTH];
   /* What shows: a color index and its palette, 0-7 the background's, 8-15 the objects'. For a DMG game, the index is */
   /* the shade its palette register gives, and the palette only matters to a CGB running it: 0, 8 for OBP0, 9 OBP1. */
-  /* A DMG's shades go straight into the frame. */
-  uint8_t indexes[LCD_WIDTH];
+  uint8_t pixel[LCD_WIDTH];
   uint8_t palette[LCD_WIDTH];
-  uint8_t *pixel = indexes;
-  if (model == MODEL_DMG) {
-    pixel = framebuffer[ly];
-  }
 
   if (model == MODEL_CGB) {
     render_background(lcdc, ly, color, attrs);
@@ -422,16 +413,19 @@ static void render_line(uint8_t ly) {
   } else {
     memset(color, 0, sizeof(color));
     memset(attrs, 0, sizeof(attrs));
-    memset(pixel, 0, LCD_WIDTH);
+    memset(pixel, 0, sizeof(pixel));
     memset(palette, 0, sizeof(palette));
   }
   if (lcdc & LCDC_OBJ_ENABLE) {
     render_sprites(lcdc, ly, color, attrs, pixel, palette);
   }
 
-  if (model != MODEL_DMG) {
-    for (int x = 0; x < LCD_WIDTH; ++x) {
-      color_frame[ly][x] = palette_color(palette[x], pixel[x]);
+  /* a DMG's shades are what shows; a CGB's color indexes go through its palettes */
+  for (int x = 0; x < LCD_WIDTH; ++x) {
+    if (model == MODEL_DMG) {
+      frame[ly][x] = pixel[x];
+    } else {
+      frame[ly][x] = palette_color(palette[x], pixel[x]);
     }
   }
 }
@@ -528,6 +522,7 @@ static void start_line(void) {
     set_mode(MODE_VBLANK);
     io_request(INT_VBLANK);
     ++frames;
+    host_frame();
   }
   compare_lyc();
 }
@@ -563,11 +558,15 @@ void video_tick(uint32_t cycles) {
   spare_cycles = cycles;
 }
 
+/* the whole screen one shade, on a DMG, or one color */
 static void fill(uint8_t shade, uint16_t color) {
-  memset(framebuffer, shade, sizeof(framebuffer));
+  uint16_t value = color;
+  if (model == MODEL_DMG) {
+    value = shade;
+  }
   for (int y = 0; y < LCD_HEIGHT; ++y) {
     for (int x = 0; x < LCD_WIDTH; ++x) {
-      color_frame[y][x] = color;
+      frame[y][x] = value;
     }
   }
 }

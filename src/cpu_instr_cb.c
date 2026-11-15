@@ -15,7 +15,7 @@
 
 #include "cpu_instr_cb.h"
 
-#include "failboy.h"
+#include "core.h"
 
 /* CB Instructions */
 static force_inline uint8_t SWAP(uint8_t n) {

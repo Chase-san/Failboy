@@ -16,7 +16,7 @@
 /* The APU: two square channels (the first with a frequency sweep), a wave channel and a noise channel, clocked by */
 /* the 512 Hz frame sequencer and mixed down to stereo, which the front end takes as samples at AUDIO_RATE. */
 
-#include "failboy.h"
+#include "core.h"
 
 enum {
   NR10 = 0xFF10, /* channel 1, square with sweep: sweep */
@@ -96,7 +96,7 @@ enum {
   LEFT = 0,
   RIGHT = 1,
   SIDES = 2,
-  SAMPLE_BUFFER = 4096,                              /* sample frames held for the front end, about 86 ms */
+  SAMPLE_BUFFER = GB_AUDIO_BUFFER,                   /* sample frames held for the host, about 86 ms */
   PENDING_MAX = SAMPLE_BUFFER * AUDIO_SAMPLE_CYCLES, /* the most T-cycles left for catch_up(): a buffer's worth */
   SAMPLE_GAIN = 32, /* the loudest mix is +-480, and the filter can at most double that: +-30720 */
 };
@@ -161,6 +161,7 @@ static uint8_t wave_sample; /* the wave channel's current 4-bit sample */
 static uint16_t lfsr = LFSR_RESET;
 
 static int pending;             /* T-cycles the channels haven't been run for yet */
+static int handing_over;        /* the host's audio callback has the full buffer */
 static int levels[SIDES];       /* the mix as it stands */
 static int levels_stale = 1;    /* something it depends on has changed since */
 static int sums[SIDES];         /* the mix, added up over each T-cycle of the sample so far */
@@ -430,9 +431,16 @@ static void mix(void) {
 /* A finished sample: the mix averaged over its T-cycles, through the output capacitor, which takes the DC out. */
 static void emit(void) {
   if (sample_frames == SAMPLE_BUFFER) {
-    /* nobody's taking them: the sample is dropped, and the channels run on, as the game can still see them */
-    sums[LEFT] = sums[RIGHT] = 0;
-    return;
+    handing_over = 1;
+    int taken = host_audio(samples, sample_frames);
+    handing_over = 0;
+    if (taken) {
+      sample_frames = 0;
+    } else {
+      /* nobody's taking them: the sample is dropped, and the channels run on, as the game can still see them */
+      sums[LEFT] = sums[RIGHT] = 0;
+      return;
+    }
   }
   for (int side = 0; side < SIDES; ++side) {
     float in = (float)sums[side] / AUDIO_SAMPLE_CYCLES;
@@ -448,6 +456,9 @@ static void emit(void) {
 /* changes them and before the samples are taken, going straight from one step of a channel (or end of a sample) to */
 /* the next. */
 static void catch_up(void) {
+  if (handing_over) {
+    return; /* the host is back here from its callback, in the middle of this already */
+  }
   while (pending > 0) {
     int run = AUDIO_SAMPLE_CYCLES - sample_clock;
     if (run > pending) {

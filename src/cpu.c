@@ -13,12 +13,9 @@
  * GNU General Public License for more details.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-
+#include "core.h"
 #include "cpu_instr.h"
 #include "cpu_instr_cb.h"
-#include "failboy.h"
 
 typedef void (*instruction_f)(void);
 typedef void (*instruction_cb_f)(uint8_t);
@@ -79,11 +76,8 @@ void bus_idle(void) {
 
 void NOP(void) {}
 
-void XXX(void) {
-  uint16_t pc = r.PC - 1;
-  fprintf(stderr, "illegal opcode %02X at %04X\n", mem_read(pc), pc);
-  cpu_locked = 1;
-}
+/* an illegal opcode, left just behind PC */
+void XXX(void) { cpu_locked = 1; }
 
 static const instruction_f instr_cb_map[64] = {
     RLC_B,  RLC_C,  RLC_D,  RLC_E,  RLC_H,  RLC_L,  RLC_aHL,  RLC_A,  /* 00-07 */
@@ -249,6 +243,12 @@ uint32_t step(void) {
     cycle_counter += M_CYCLE;
     return M_CYCLE;
   }
+  if (cpu_locked) {
+    /* the CPU is hung, and the rest of the machine carries on without it */
+    run_machine(M_CYCLE);
+    cycle_counter += M_CYCLE;
+    return M_CYCLE >> double_speed;
+  }
   uint64_t start = cycle_counter;
   bus_cycles = 0;
   cpu_interrupt();
@@ -267,9 +267,7 @@ uint32_t step(void) {
     if (ei_delay && --ei_delay == 0) {
       ime = 1;
     }
-    if (doctor) {
-      cpu_trace();
-    }
+    host_trace();
   }
 
   /* The bus ran the accesses; what's left is the M-cycles the CPU spent on its own at the end (or all of HALT's). */
@@ -281,19 +279,11 @@ uint32_t step(void) {
   return cycles >> double_speed;
 }
 
-/* One line per instruction, in Gameboy Doctor's log format. */
-void cpu_trace(void) {
-  printf("A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X SP:%04X PC:%04X PCMEM:%02X,%02X,%02X,%02X\n", r.A,
-         r.F, r.B, r.C, r.D, r.E, r.H, r.L, r.SP, r.PC, mem_read(r.PC), mem_read(r.PC + 1), mem_read(r.PC + 2),
-         mem_read(r.PC + 3));
-}
-
-void cpu_bios_init(void) {
+int cpu_bios_init(void) {
   /* Bit-field layout is up to the compiler; make sure F_Z..F_C really are bits 7..4. */
   r.F = 0x90;
   if (!r.F_Z || r.F_N || r.F_H || !r.F_C) {
-    fprintf(stderr, "flag bit-fields don't match the F register layout\n");
-    abort();
+    return 0;
   }
 
   /*
@@ -340,4 +330,5 @@ void cpu_bios_init(void) {
   mem_write(0xFF4A, 0x00);  // WY
   mem_write(0xFF4B, 0x00);  // WX
   mem_write(0xFFFF, 0x00);  // IE
+  return 1;
 }

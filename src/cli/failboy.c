@@ -13,14 +13,17 @@
  * GNU General Public License for more details.
  */
 
+/* The command line: loads a ROM and its saves, and runs it in a window, or headless for the test ROMs. */
+
 #include "failboy.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
-#include "files.h"
+#include "cli/files.h"
 
 #ifdef FAILBOY_SDL
 #include "sdl/frontend.h"
@@ -34,6 +37,10 @@
 enum {
   DEFAULT_SECONDS = 120, /* headless only; the window runs until it's closed */
   TRACE_BUFFER_SIZE = 1 << 20,
+  HEADER_CART_TYPE = 0x147,
+  BYTE_BITS = 8,
+  BYTE_MASK = 0xFF,
+  TRACE_BYTES = 4, /* of memory at PC, in each line of a trace */
 };
 
 /* exit status */
@@ -42,6 +49,13 @@ enum {
   EXIT_FAILED = 1,
   EXIT_ERROR = 2,
   EXIT_NO_RESULT = 3,
+};
+
+/* what Blargg's test ROMs have reported over the serial port */
+enum {
+  SERIAL_NONE,
+  SERIAL_PASSED,
+  SERIAL_FAILED,
 };
 
 /* --dump writes an 8-bit greyscale PGM, with the DMG's four shades, or on a CGB, a PPM */
@@ -59,21 +73,34 @@ static const char SAVE_EXTENSION[] = ".sav";
 static const char RTC_EXTENSION[] = ".rtc";
 
 /* --mode: the machine to run as, or what the cartridge's header asks for */
-enum {
-  MODE_AUTO = -1,
-  MODE_SGB = -2, /* not supported yet */
-  MODE_UNKNOWN = -3,
-};
-
 static const struct {
   const char *name;
-  int mode;
+  enum gb_revision revision;
 } modes[] = {
-    {"auto", MODE_AUTO}, {"dmg", MODEL_DMG}, {"gbc", MODEL_CGB}, {"gbcfb", MODEL_CGB_DMG}, {"sgb", MODE_SGB},
+    {"auto", GB_REVISION_AUTO},
+    {"dmg", GB_DMG_ABC},
+    {"cgb", GB_CGB_E},
+    {"cgbfb", GB_CGB_E}, /* once a mode of its own; a cgb falls back by itself now */
+    {"sgb", GB_SGB},
+    /* and the exact revisions */
+    {"dmg0", GB_DMG_0},
+    {"mgb", GB_MGB},
+    {"sgb2", GB_SGB2},
+    {"cgb0", GB_CGB_0},
+    {"cgba", GB_CGB_A},
+    {"cgbb", GB_CGB_B},
+    {"cgbc", GB_CGB_C},
+    {"cgbd", GB_CGB_D},
+    {"cgbe", GB_CGB_E},
+    {"agb", GB_AGB},
 };
 
-int doctor = 0;
-int model = MODEL_DMG;
+/* --doctor: a Gameboy Doctor trace on stdout, which moves serial output to stderr */
+static int doctor = 0;
+
+/* The last few characters sent over serial, to spot Blargg's "Passed"/"Failed". */
+static char serial_tail[6];
+static int serial_result = SERIAL_NONE;
 
 /* Release builds on Windows are windowed programs with no console of their own. When one is started from a */
 /* terminal, borrow that terminal for anything not already redirected, so usage, errors and --headless output show. */
@@ -98,10 +125,12 @@ static int usage(const char *name) {
   fprintf(stderr, "  --rslcd      start with the really shitty LCD (L toggles it)\n");
   fprintf(stderr, "  --headless   run without a window (implied by the options below)\n");
 #endif
-  fprintf(stderr, "  --mode MODE  what to run as: auto (the default: what the game's header asks for), dmg (an\n");
-  fprintf(stderr,
-          "               original Game Boy), gbc (a Game Boy Color), gbcfb (a Game Boy Color in its fallback\n");
-  fprintf(stderr, "               mode for original Game Boy games) or sgb (not supported yet)\n");
+  fprintf(stderr, "  --mode MODE  mode override: default is auto\n");
+  fprintf(stderr, "         auto  select based on the game\n");
+  fprintf(stderr, "         dmg   original gameboy\n");
+  fprintf(stderr, "         cgb   color gameboy, which runs an original gameboy game in its fallback mode\n");
+  fprintf(stderr, "         sgb   super gameboy (unimplemented)\n");
+  fprintf(stderr, "         or an exact revision: dmg0, mgb, sgb2, cgb0, cgba to cgbe, agb (most unimplemented)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image (a PPM for a Game Boy Color)\n");
@@ -114,31 +143,78 @@ static int usage(const char *name) {
   return EXIT_ERROR;
 }
 
+/* the index in modes of a --mode, or -1 */
 static int find_mode(const char *name) {
   for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
     if (strcmp(name, modes[i].name) == 0) {
-      return modes[i].mode;
+      return (int)i;
     }
   }
-  return MODE_UNKNOWN;
+  return -1;
 }
 
-static int dump_frame(const char *filename) {
+/* **************************************** */
+/* What the core calls back for */
+
+static void serial_out(struct gb *gb, void *user, uint8_t c) {
+  (void)gb;
+  (void)user;
+  FILE *out = stdout;
+  if (doctor) {
+    /* stdout is carrying the trace */
+    out = stderr;
+  }
+  fputc(c, out);
+  fflush(out);
+
+  memmove(serial_tail, serial_tail + 1, sizeof(serial_tail) - 1);
+  serial_tail[sizeof(serial_tail) - 1] = c;
+  if (memcmp(serial_tail, "Failed", sizeof(serial_tail)) == 0) {
+    serial_result = SERIAL_FAILED;
+  } else if (serial_result == SERIAL_NONE && memcmp(serial_tail, "Passed", sizeof(serial_tail)) == 0) {
+    serial_result = SERIAL_PASSED;
+  }
+}
+
+/* One line per instruction, in Gameboy Doctor's log format. */
+static void trace(struct gb *gb, void *user) {
+  (void)user;
+  struct gb_cpu cpu;
+  uint8_t memory[TRACE_BYTES];
+  gb_cpu(gb, &cpu);
+  for (int i = 0; i < TRACE_BYTES; ++i) {
+    memory[i] = gb_read(gb, (uint16_t)(cpu.pc + i));
+  }
+  printf("A:%02X F:%02X B:%02X C:%02X D:%02X E:%02X H:%02X L:%02X SP:%04X PC:%04X PCMEM:%02X,%02X,%02X,%02X\n",
+         cpu.af >> BYTE_BITS, cpu.af & BYTE_MASK, cpu.bc >> BYTE_BITS, cpu.bc & BYTE_MASK, cpu.de >> BYTE_BITS,
+         cpu.de & BYTE_MASK, cpu.hl >> BYTE_BITS, cpu.hl & BYTE_MASK, cpu.sp, cpu.pc, memory[0], memory[1], memory[2],
+         memory[3]);
+}
+
+/* a cartridge's clock keeps the real time */
+static int64_t host_time(struct gb *gb, void *user) {
+  (void)gb;
+  (void)user;
+  return (int64_t)time(NULL);
+}
+
+/* **************************************** */
+
+static int dump_frame(const struct gb *gb, const char *filename) {
   FILE *f = fopen(filename, "wb");
   if (f == NULL) {
     fprintf(stderr, "failboy: can't write '%s'\n", filename);
     return 0;
   }
-  if (model == MODEL_DMG) {
-    const uint8_t *frame = video_framebuffer();
-    fprintf(f, "P5\n%d %d\n255\n", LCD_WIDTH, LCD_HEIGHT);
-    for (int i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
+  const uint16_t *frame = gb_pixels(gb);
+  if (gb_pixel_format(gb) == GB_PIXELS_SHADES) {
+    fprintf(f, "P5\n%d %d\n255\n", GB_LCD_WIDTH, GB_LCD_HEIGHT);
+    for (int i = 0; i < GB_LCD_WIDTH * GB_LCD_HEIGHT; ++i) {
       fputc(dump_gray[frame[i]], f);
     }
   } else {
-    const uint16_t *frame = video_colors();
-    fprintf(f, "P6\n%d %d\n255\n", LCD_WIDTH, LCD_HEIGHT);
-    for (int i = 0; i < LCD_WIDTH * LCD_HEIGHT; ++i) {
+    fprintf(f, "P6\n%d %d\n255\n", GB_LCD_WIDTH, GB_LCD_HEIGHT);
+    for (int i = 0; i < GB_LCD_WIDTH * GB_LCD_HEIGHT; ++i) {
       for (int component = 0; component < COMPONENTS; ++component) {
         uint8_t c = (frame[i] >> (component * COMPONENT_BITS)) & COMPONENT_MASK;
         fputc(c << WIDEN_SHIFT | c >> (COMPONENT_BITS - WIDEN_SHIFT), f);
@@ -152,16 +228,18 @@ static int dump_frame(const char *filename) {
   return 1;
 }
 
-static void run_headless(uint64_t limit, unsigned long frames) {
-  uint64_t elapsed = 0; /* T-cycles at the normal speed */
-  while (!cpu_locked && elapsed < limit) {
-    uint16_t pc = r.PC;
-    elapsed += step();
+static void run_headless(struct gb *gb, uint64_t limit, unsigned long frames) {
+  struct gb_cpu cpu;
+  gb_cpu(gb, &cpu);
+  while (!cpu.locked && gb_ticks(gb) < limit) {
+    uint16_t pc = cpu.pc;
+    gb_step(gb);
+    gb_cpu(gb, &cpu);
     if (frames) {
-      if (video_frames() >= frames) {
+      if (gb_frames(gb) >= frames) {
         break;
       }
-    } else if (r.PC == pc && !halted && !ime) {
+    } else if (cpu.pc == pc && !cpu.halted && !cpu.ime) {
       /* Jumping to itself with interrupts off: nothing can ever get it out (test ROMs end this way). */
       break;
     }
@@ -196,7 +274,7 @@ static char *with_extension(const char *path, const char *extension) {
 
 /* Loads saved state (battery RAM or the clock) into the cartridge, if there is any. Returns 0 if there's a save that */
 /* can't be read, which then mustn't be saved over. */
-static int load_state(const char *path, void (*restore)(const uint8_t *, unsigned int)) {
+static int load_state(struct gb *gb, const char *path, void (*restore)(struct gb *, const uint8_t *, uint32_t)) {
   FILE *f = fopen(path, "rb");
   if (f == NULL) {
     if (errno == ENOENT) {
@@ -217,16 +295,17 @@ static int load_state(const char *path, void (*restore)(const uint8_t *, unsigne
     fprintf(stderr, "failboy: can't read the save file '%s', so it won't be saved over\n", path);
     return 0;
   }
-  restore(data, size);
+  restore(gb, data, size);
   free(data);
   return 1;
 }
 
-static int save_state(const char *path, unsigned int size, void (*collect)(uint8_t *, unsigned int)) {
+static int save_state(const struct gb *gb, const char *path, uint32_t size,
+                      void (*collect)(const struct gb *, uint8_t *, uint32_t)) {
   uint8_t *data = malloc(size);
   int ok = data != NULL;
   if (ok) {
-    collect(data, size);
+    collect(gb, data, size);
     ok = file_save(path, data, size);
   }
   if (!ok) {
@@ -236,14 +315,38 @@ static int save_state(const char *path, unsigned int size, void (*collect)(uint8
   return ok;
 }
 
-static int run_window(uint64_t limit, int rslcd) {
+static int run_window(struct gb *gb, uint64_t limit, int rslcd) {
 #ifdef FAILBOY_SDL
-  return frontend_run(limit, rslcd);
+  return frontend_run(gb, limit, rslcd);
 #else
+  (void)gb;
   (void)limit;
   (void)rslcd;
   return 0;
 #endif
+}
+
+/* why gb_create() wouldn't */
+static void report(enum gb_error error, const char *filename, const char *mode, const uint8_t *rom,
+                   unsigned int rom_size) {
+  switch (error) {
+    case GB_ERROR_ROM:
+      fprintf(stderr, "failboy: '%s' isn't a Game Boy ROM (size %u)\n", filename, rom_size);
+      break;
+    case GB_ERROR_CARTRIDGE:
+      fprintf(stderr, "failboy: '%s' uses cartridge type %02X, which isn't supported yet\n", filename,
+              rom[HEADER_CART_TYPE]);
+      break;
+    case GB_ERROR_REVISION:
+      fprintf(stderr, "failboy: %s mode isn't supported yet\n", mode);
+      break;
+    case GB_ERROR_MEMORY:
+      fprintf(stderr, "failboy: out of memory\n");
+      break;
+    default:
+      fprintf(stderr, "failboy: the core won't start (error %d)\n", (int)error);
+      break;
+  }
 }
 
 int main(int argc, char *argv[]) {
@@ -254,7 +357,7 @@ int main(int argc, char *argv[]) {
   unsigned long frames = 0;
   int headless = 1;
   int rslcd = 0;
-  int mode = MODE_AUTO;
+  int mode = 0; /* auto */
 #ifdef FAILBOY_SDL
   headless = 0;
 #endif
@@ -269,12 +372,8 @@ int main(int argc, char *argv[]) {
 #endif
     } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
       mode = find_mode(argv[++i]);
-      if (mode == MODE_UNKNOWN) {
+      if (mode < 0) {
         return usage(argv[0]);
-      }
-      if (mode == MODE_SGB) {
-        fprintf(stderr, "failboy: sgb mode isn't supported yet\n");
-        return EXIT_ERROR;
       }
     } else if (strcmp(argv[i], "--doctor") == 0) {
       doctor = 1;
@@ -301,54 +400,56 @@ int main(int argc, char *argv[]) {
 
   uint64_t limit = UINT64_MAX;
   if (seconds) {
-    limit = (uint64_t)seconds * CLOCK_HZ;
+    limit = (uint64_t)seconds * GB_CLOCK_HZ;
   } else if (headless) {
-    limit = (uint64_t)DEFAULT_SECONDS * CLOCK_HZ;
+    limit = (uint64_t)DEFAULT_SECONDS * GB_CLOCK_HZ;
   }
 
-  if (!cart_load(filename)) {
+  unsigned int rom_size = 0;
+  uint8_t *rom = file_load(filename, &rom_size);
+  if (rom == NULL) {
+    fprintf(stderr, "failboy: can't read '%s'\n", filename);
     return EXIT_ERROR;
   }
+
+  struct gb_config config = {0};
+  config.revision = modes[mode].revision;
   /* Gameboy Doctor's logs start from the DMG's registers */
-  if (doctor && mode == MODE_AUTO) {
-    mode = MODEL_DMG;
+  if (doctor && config.revision == GB_REVISION_AUTO) {
+    config.revision = GB_DMG_ABC;
   }
-  model = mode;
-  if (mode == MODE_AUTO) {
-    model = MODEL_DMG;
-    if (cart_cgb()) {
-      model = MODEL_CGB;
-    }
+  config.rom = rom;
+  config.rom_size = rom_size;
+  config.doctor = doctor;
+  config.host.serial = serial_out;
+  config.host.clock = host_time;
+  if (doctor) {
+    config.host.trace = trace;
   }
-  if (model == MODEL_CGB && !cart_cgb()) {
-    fprintf(stderr,
-            "failboy: '%s' isn't a Game Boy Color game, so it has no colors to show (gbcfb runs it as a GBC "
-            "would)\n",
-            filename);
-  }
-  if (!mem_alloc()) {
-    fprintf(stderr, "failboy: out of memory\n");
-    cart_free();
+  struct gb *gb = NULL;
+  enum gb_error error = gb_create(&config, &gb);
+  if (error != GB_OK) {
+    report(error, filename, modes[mode].name, rom, rom_size);
+    free(rom);
     return EXIT_ERROR;
   }
-  cpu_bios_init();
 
   /* Battery-backed RAM and the MBC3's clock are loaded now and saved again on the way out: the save file is --save's */
   /* or rom.sav next to the ROM, and the clock goes beside it with the same name, ending .rtc. */
   const char *save_file = save_option;
   char *default_save = NULL;
   char *rtc_file = NULL;
-  if (save_file == NULL && (cart_battery_ram_size() > 0 || cart_has_rtc())) {
+  if (save_file == NULL && (gb_save_size(gb) > 0 || gb_has_rtc(gb))) {
     default_save = with_extension(filename, SAVE_EXTENSION);
     save_file = default_save;
   }
-  if (save_file != NULL && cart_has_rtc()) {
+  if (save_file != NULL && gb_has_rtc(gb)) {
     rtc_file = with_extension(save_file, RTC_EXTENSION);
   }
-  if (cart_battery_ram_size() == 0 || (save_file != NULL && !load_state(save_file, cart_write_battery_ram))) {
+  if (gb_save_size(gb) == 0 || (save_file != NULL && !load_state(gb, save_file, gb_save_write))) {
     save_file = NULL;
   }
-  if (rtc_file != NULL && !load_state(rtc_file, cart_write_rtc)) {
+  if (rtc_file != NULL && !load_state(gb, rtc_file, gb_rtc_write)) {
     free(rtc_file);
     rtc_file = NULL;
   }
@@ -357,36 +458,40 @@ int main(int argc, char *argv[]) {
   if (headless) {
     if (doctor) {
       setvbuf(stdout, NULL, _IOFBF, TRACE_BUFFER_SIZE);
-      cpu_trace();
+      trace(gb, NULL);
     }
-    run_headless(limit, frames);
+    run_headless(gb, limit, frames);
     if (dump) {
-      ok = dump_frame(dump);
+      ok = dump_frame(gb, dump);
     }
   } else {
-    ok = run_window(limit, rslcd);
+    ok = run_window(gb, limit, rslcd);
+  }
+  struct gb_cpu cpu;
+  gb_cpu(gb, &cpu);
+  if (cpu.locked) {
+    uint16_t pc = cpu.pc - 1;
+    fprintf(stderr, "illegal opcode %02X at %04X\n", gb_read(gb, pc), pc);
   }
 
-  if (save_file != NULL && !save_state(save_file, cart_battery_ram_size(), cart_read_battery_ram)) {
+  if (save_file != NULL && !save_state(gb, save_file, gb_save_size(gb), gb_save_read)) {
     ok = 0;
   }
-  if (rtc_file != NULL && !save_state(rtc_file, CART_RTC_SIZE, cart_read_rtc)) {
+  if (rtc_file != NULL && !save_state(gb, rtc_file, GB_RTC_SIZE, gb_rtc_read)) {
     ok = 0;
   }
   free(default_save);
   free(rtc_file);
-
-  int result = io_serial_result();
-  mem_free();
-  cart_free();
+  gb_destroy(gb);
+  free(rom);
 
   if (!ok) {
     return EXIT_ERROR;
   }
-  if (result == SERIAL_PASSED) {
+  if (serial_result == SERIAL_PASSED) {
     return EXIT_PASSED;
   }
-  if (result == SERIAL_FAILED) {
+  if (serial_result == SERIAL_FAILED) {
     return EXIT_FAILED;
   }
   return EXIT_NO_RESULT;

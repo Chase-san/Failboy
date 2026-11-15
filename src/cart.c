@@ -12,12 +12,10 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "failboy.h"
-#include "files.h"
+#include "core.h"
 #include "rtc.h"
 
 /* cartridge types, from header byte 0x147 */
@@ -99,7 +97,7 @@ enum {
 /* cart RAM size by header byte 0x149 */
 static const unsigned int ram_sizes[6] = {0, 0x800, 0x2000, 0x8000, 0x20000, 0x10000};
 
-static uint8_t *rom;
+static const uint8_t *rom; /* the host's */
 static uint8_t *ram;
 
 static uint8_t cart_mode = MODE_MODELESS;
@@ -107,9 +105,8 @@ static unsigned int rom_bank = 1; /* 2000-3fff (MBC1: its low 5 bits) */
 static uint8_t ram_bank = 0; /* 4000-5fff: RAM bank; MBC1: or bits 5-6 of the ROM bank; MBC3: or a clock register */
 static uint8_t ram_enabled = 0;
 static uint8_t rumble = 0;
-static uint8_t battery = 0; /* the RAM keeps its contents with the power off */
-static uint8_t rtc = 0;     /* MBC3 with a clock */
-static unsigned int rom_size;
+static uint8_t battery = 0;   /* the RAM keeps its contents with the power off */
+static uint8_t rtc = 0;       /* MBC3 with a clock */
 static unsigned int rom_mask; /* number of 16 kB banks - 1 */
 static unsigned int ram_size;
 
@@ -409,21 +406,13 @@ static unsigned int header_ram_size(void) {
   return 0;
 }
 
-int cart_load(const char *filename) {
-  if (rom != NULL) {
-    cart_free();
-  }
-  rom = file_load(filename, &rom_size);
-  if (rom == NULL) {
-    fprintf(stderr, "failboy: can't read '%s'\n", filename);
-    return 0;
-  }
+enum gb_error cart_load(const uint8_t *data, uint32_t rom_size) {
+  cart_free();
   /* ROMs come in 32 kB * 2^n */
-  if (rom_size < 2 * ROM_BANK_SIZE || (rom_size & (rom_size - 1)) != 0) {
-    fprintf(stderr, "failboy: '%s' isn't a Game Boy ROM (size %u)\n", filename, rom_size);
-    cart_free();
-    return 0;
+  if (data == NULL || rom_size < 2 * ROM_BANK_SIZE || (rom_size & (rom_size - 1)) != 0) {
+    return GB_ERROR_ROM;
   }
+  rom = data;
   rom_mask = rom_size / ROM_BANK_SIZE - 1;
 
   uint8_t type = rom[HEADER_CART_TYPE];
@@ -489,17 +478,15 @@ int cart_load(const char *filename) {
       ram_size = header_ram_size();
       break;
     default:
-      fprintf(stderr, "failboy: '%s' uses cartridge type %02X, which isn't supported yet\n", filename, type);
       cart_free();
-      return 0;
+      return GB_ERROR_CARTRIDGE;
   }
 
   if (ram_size) {
     ram = calloc(1, ram_size);
     if (ram == NULL) {
-      fprintf(stderr, "failboy: out of memory\n");
       cart_free();
-      return 0;
+      return GB_ERROR_MEMORY;
     }
   }
   battery = has_battery(type);
@@ -508,7 +495,15 @@ int cart_load(const char *filename) {
   if (rtc) {
     rtc_reset();
   }
-  return 1;
+  return GB_OK;
+}
+
+uint8_t *cart_ram(uint32_t *size) {
+  *size = 0;
+  if (ram != NULL) {
+    *size = ram_size;
+  }
+  return ram;
 }
 
 int cart_cgb(void) { return (rom[HEADER_CGB] & HEADER_CGB_GAME) != 0; }
@@ -551,11 +546,6 @@ void cart_write_rtc(const uint8_t *buffer, unsigned int size) {
 }
 
 void cart_free(void) {
-  if (rom != NULL) {
-    free(rom);
-  }
-  if (ram != NULL) {
-    free(ram);
-  }
+  free(ram);
   cart_mem_reset();
 }

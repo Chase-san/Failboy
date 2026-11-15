@@ -18,8 +18,10 @@
 
 #include <stdint.h>
 
-/* Runs the loaded cartridge in a window until it's closed, or for up to cycle_limit T-cycles, starting in RSLCD */
-/* mode if rslcd is set. Returns 0 if the window couldn't be opened. */
-int frontend_run(uint64_t, int);
+#include "failboy.h"
+
+/* Runs the Game Boy in a window until it's closed, or until it has run tick_limit ticks, starting in RSLCD mode if */
+/* rslcd is set. Returns 0 if the window couldn't be opened. */
+int frontend_run(struct gb *gb, uint64_t tick_limit, int rslcd);
 
 #endif /* _FRONTEND_H_ */

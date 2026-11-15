@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  */
 
-#include "files.h"
+#include "cli/files.h"
 
 #include <stdio.h>
 #include <stdlib.h>

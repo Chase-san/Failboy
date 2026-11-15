@@ -17,7 +17,8 @@
 
 #include <limits.h>
 #include <string.h>
-#include <time.h>
+
+#include "core.h"
 
 enum {
   RTC_SECONDS,
@@ -55,12 +56,10 @@ static int64_t since;
 /* what the game reads: the registers at the last latch */
 static uint8_t latched[RTC_REGISTERS];
 
-static int64_t host_time(void) { return (int64_t)time(NULL); }
-
 /* the registers as of now */
 static void present(uint8_t *out) {
   memcpy(out, base, RTC_REGISTERS);
-  int64_t elapsed = host_time() - since;
+  int64_t elapsed = host_clock() - since;
   if ((base[RTC_DAY_HIGH] & HALT) || elapsed <= 0) {
     return;
   }
@@ -82,7 +81,7 @@ static void present(uint8_t *out) {
 void rtc_reset(void) {
   memset(base, 0, sizeof(base));
   memset(latched, 0, sizeof(latched));
-  since = host_time();
+  since = host_clock();
 }
 
 void rtc_latch(void) { present(latched); }
@@ -94,7 +93,7 @@ void rtc_write(int reg, uint8_t value) {
   uint8_t now[RTC_REGISTERS];
   present(now);
   memcpy(base, now, sizeof(base));
-  since = host_time();
+  since = host_clock();
   base[reg] = value & register_mask[reg];
 }
 

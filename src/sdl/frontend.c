@@ -35,7 +35,7 @@ enum {
   MAX_LAG_FRAMES = 4, /* further behind than this (a dragged window, a debugger) and we stop trying to catch up */
   AUDIO_CHANNELS = 2,
   AUDIO_FRAME_BYTES = AUDIO_CHANNELS * sizeof(int16_t),
-  AUDIO_TARGET = AUDIO_RATE / 20,     /* sample frames to keep queued for the device: 50 ms */
+  AUDIO_TARGET = GB_AUDIO_RATE / 20,  /* sample frames to keep queued for the device: 50 ms */
   AUDIO_MAX_QUEUE = AUDIO_TARGET * 4, /* further ahead than this, samples are dropped rather than add to the delay */
 };
 
@@ -64,15 +64,17 @@ static const struct {
   SDL_Scancode key;
   uint8_t button;
 } keymap[] = {
-    {SDL_SCANCODE_RIGHT, JOYPAD_RIGHT},      {SDL_SCANCODE_LEFT, JOYPAD_LEFT},    {SDL_SCANCODE_UP, JOYPAD_UP},
-    {SDL_SCANCODE_DOWN, JOYPAD_DOWN},        {SDL_SCANCODE_X, JOYPAD_A},          {SDL_SCANCODE_Z, JOYPAD_B},
-    {SDL_SCANCODE_BACKSPACE, JOYPAD_SELECT}, {SDL_SCANCODE_RETURN, JOYPAD_START},
+    {SDL_SCANCODE_RIGHT, GB_BUTTON_RIGHT},      {SDL_SCANCODE_LEFT, GB_BUTTON_LEFT},    {SDL_SCANCODE_UP, GB_BUTTON_UP},
+    {SDL_SCANCODE_DOWN, GB_BUTTON_DOWN},        {SDL_SCANCODE_X, GB_BUTTON_A},          {SDL_SCANCODE_Z, GB_BUTTON_B},
+    {SDL_SCANCODE_BACKSPACE, GB_BUTTON_SELECT}, {SDL_SCANCODE_RETURN, GB_BUTTON_START},
 };
 
 struct screen {
+  struct gb *gb;
+  int shades; /* an original Game Boy's picture: shades, not colors */
   SDL_Window *window;
   SDL_Renderer *renderer;
-  SDL_Texture *plain; /* LCD_WIDTH x LCD_HEIGHT */
+  SDL_Texture *plain; /* GB_LCD_WIDTH x GB_LCD_HEIGHT */
   SDL_Texture *lcd;   /* RSLCD, at lcd_scale output pixels per Game Boy pixel */
   int lcd_scale;
   int rslcd;
@@ -89,17 +91,6 @@ static uint8_t read_buttons(void) {
   return pressed;
 }
 
-/* Runs until the PPU finishes a frame, but no longer than a frame's worth, so the window stays live while the LCD */
-/* is off. Returns the T-cycles it ran. */
-static uint32_t run_frame(void) {
-  uint32_t frame = video_frames();
-  uint32_t cycles = 0;
-  while (!cpu_locked && video_frames() == frame && cycles < FRAME_CYCLES) {
-    cycles += step();
-  }
-  return cycles;
-}
-
 static uint32_t rgb(uint16_t color) {
   uint32_t xrgb = 0;
   for (int component = 0; component < COMPONENTS; ++component) {
@@ -111,7 +102,7 @@ static uint32_t rgb(uint16_t color) {
 
 /* SDL converts the APU's samples for the audio device. Returns NULL, and we carry on without sound, if it can't. */
 static SDL_AudioStream *open_audio(void) {
-  const SDL_AudioSpec spec = {SDL_AUDIO_S16, AUDIO_CHANNELS, AUDIO_RATE};
+  const SDL_AudioSpec spec = {SDL_AUDIO_S16, AUDIO_CHANNELS, GB_AUDIO_RATE};
   SDL_AudioStream *stream = NULL;
   if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
     stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
@@ -124,9 +115,9 @@ static SDL_AudioStream *open_audio(void) {
 
 /* Queues the frame's samples. The device's clock never quite matches the one pacing the frames, so the playback */
 /* rate is bent slightly to hold the queue at AUDIO_TARGET, which also covers the device taking big bites of it. */
-static void play_audio(SDL_AudioStream *stream) {
+static void play_audio(struct gb *gb, SDL_AudioStream *stream) {
   unsigned int frames = 0;
-  const int16_t *samples = audio_samples(&frames);
+  const int16_t *samples = gb_audio(gb, &frames);
   if (stream == NULL) {
     return;
   }
@@ -168,12 +159,12 @@ static int handle_key(struct screen *screen, SDL_Scancode key) {
     case SDL_SCANCODE_ESCAPE:
       return 0;
     case SDL_SCANCODE_L:
-      if (model != MODEL_DMG) {
-        return 1; /* RSLCD is the DMG's screen */
+      if (!screen->shades) {
+        return 1; /* RSLCD is the original Game Boy's screen */
       }
       screen->rslcd = !screen->rslcd;
       if (screen->rslcd) {
-        rslcd_reset(video_framebuffer());
+        rslcd_reset(gb_pixels(screen->gb));
       }
       update_title(screen);
       return 1;
@@ -186,21 +177,21 @@ static void draw_plain(struct screen *screen) {
   void *pixels;
   int pitch;
   if (SDL_LockTexture(screen->plain, NULL, &pixels, &pitch)) {
-    const uint8_t *frame = video_framebuffer();
-    const uint16_t *colors = video_colors();
-    for (int y = 0; y < LCD_HEIGHT; ++y) {
+    const uint16_t *frame = gb_pixels(screen->gb);
+    for (int y = 0; y < GB_LCD_HEIGHT; ++y) {
       uint32_t *row = (uint32_t *)((uint8_t *)pixels + y * pitch);
-      for (int x = 0; x < LCD_WIDTH; ++x) {
-        if (model == MODEL_DMG) {
-          row[x] = shade_rgb[frame[y * LCD_WIDTH + x]];
+      for (int x = 0; x < GB_LCD_WIDTH; ++x) {
+        if (screen->shades) {
+          row[x] = shade_rgb[frame[y * GB_LCD_WIDTH + x]];
         } else {
-          row[x] = rgb(colors[y * LCD_WIDTH + x]);
+          row[x] = rgb(frame[y * GB_LCD_WIDTH + x]);
         }
       }
     }
     SDL_UnlockTexture(screen->plain);
   }
-  SDL_SetRenderLogicalPresentation(screen->renderer, LCD_WIDTH, LCD_HEIGHT, SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
+  SDL_SetRenderLogicalPresentation(screen->renderer, GB_LCD_WIDTH, GB_LCD_HEIGHT,
+                                   SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
   SDL_RenderClear(screen->renderer);
   SDL_RenderTexture(screen->renderer, screen->plain, NULL, NULL);
 }
@@ -210,9 +201,9 @@ static void draw_rslcd(struct screen *screen) {
   int width = 0;
   int height = 0;
   SDL_GetRenderOutputSize(screen->renderer, &width, &height);
-  int scale = width / LCD_WIDTH;
-  if (height / LCD_HEIGHT < scale) {
-    scale = height / LCD_HEIGHT;
+  int scale = width / GB_LCD_WIDTH;
+  if (height / GB_LCD_HEIGHT < scale) {
+    scale = height / GB_LCD_HEIGHT;
   }
   if (scale < 1) {
     scale = 1;
@@ -225,7 +216,7 @@ static void draw_rslcd(struct screen *screen) {
       SDL_DestroyTexture(screen->lcd);
     }
     screen->lcd = SDL_CreateTexture(screen->renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                    LCD_WIDTH * scale, LCD_HEIGHT * scale);
+                                    GB_LCD_WIDTH * scale, GB_LCD_HEIGHT * scale);
     screen->lcd_scale = 0;
     if (screen->lcd == NULL) {
       return;
@@ -234,22 +225,24 @@ static void draw_rslcd(struct screen *screen) {
     screen->lcd_scale = scale;
   }
 
-  rslcd_frame(video_framebuffer());
+  rslcd_frame(gb_pixels(screen->gb));
   void *pixels;
   int pitch;
   if (SDL_LockTexture(screen->lcd, NULL, &pixels, &pitch)) {
     rslcd_draw(scale, pixels, pitch / (int)sizeof(uint32_t));
     SDL_UnlockTexture(screen->lcd);
   }
-  SDL_SetRenderLogicalPresentation(screen->renderer, LCD_WIDTH * scale, LCD_HEIGHT * scale,
+  SDL_SetRenderLogicalPresentation(screen->renderer, GB_LCD_WIDTH * scale, GB_LCD_HEIGHT * scale,
                                    SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
   SDL_RenderClear(screen->renderer);
   SDL_RenderTexture(screen->renderer, screen->lcd, NULL, NULL);
 }
 
-int frontend_run(uint64_t cycle_limit, int rslcd) {
+int frontend_run(struct gb *gb, uint64_t tick_limit, int rslcd) {
   struct screen screen = {0};
-  screen.rslcd = rslcd && model == MODEL_DMG;
+  screen.gb = gb;
+  screen.shades = gb_pixel_format(gb) == GB_PIXELS_SHADES;
+  screen.rslcd = rslcd && screen.shades;
 
   /* main() is ours, not SDL_main's */
   SDL_SetMainReady();
@@ -257,10 +250,10 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
     fprintf(stderr, "failboy: can't start SDL: %s\n", SDL_GetError());
     return 0;
   }
-  if (SDL_CreateWindowAndRenderer("Failboy", LCD_WIDTH * WINDOW_SCALE, LCD_HEIGHT * WINDOW_SCALE, SDL_WINDOW_RESIZABLE,
-                                  &screen.window, &screen.renderer)) {
-    screen.plain = SDL_CreateTexture(screen.renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, LCD_WIDTH,
-                                     LCD_HEIGHT);
+  if (SDL_CreateWindowAndRenderer("Failboy", GB_LCD_WIDTH * WINDOW_SCALE, GB_LCD_HEIGHT * WINDOW_SCALE,
+                                  SDL_WINDOW_RESIZABLE, &screen.window, &screen.renderer)) {
+    screen.plain = SDL_CreateTexture(screen.renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                     GB_LCD_WIDTH, GB_LCD_HEIGHT);
   }
   if (screen.plain == NULL) {
     fprintf(stderr, "failboy: can't open a window: %s\n", SDL_GetError());
@@ -270,16 +263,15 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
   SDL_SetTextureScaleMode(screen.plain, SDL_SCALEMODE_NEAREST);
   update_title(&screen);
   if (screen.rslcd) {
-    rslcd_reset(video_framebuffer());
+    rslcd_reset(gb_pixels(gb));
   }
   SDL_AudioStream *audio = open_audio();
 
   /* a frame lasts 70224 T-cycles at 4.19 MHz, about 16.74 ms (59.73 Hz) */
-  const uint64_t frame_ns = (uint64_t)FRAME_CYCLES * SDL_NS_PER_SECOND / CLOCK_HZ;
+  const uint64_t frame_ns = (uint64_t)GB_FRAME_TICKS * SDL_NS_PER_SECOND / GB_CLOCK_HZ;
   uint64_t next = SDL_GetTicksNS();
-  uint64_t elapsed = 0; /* T-cycles at the normal speed */
   int running = 1;
-  while (running && elapsed < cycle_limit) {
+  while (running && gb_ticks(gb) < tick_limit) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_EVENT_QUIT) {
@@ -288,9 +280,10 @@ int frontend_run(uint64_t cycle_limit, int rslcd) {
         running = 0;
       }
     }
-    io_joypad(read_buttons());
-    elapsed += run_frame();
-    play_audio(audio);
+    gb_buttons(gb, read_buttons());
+    /* a frame, or with the LCD off a frame's worth, so the window stays live */
+    gb_run_frame(gb);
+    play_audio(gb, audio);
     if (screen.rslcd) {
       draw_rslcd(&screen);
     } else {

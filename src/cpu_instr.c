@@ -15,7 +15,7 @@
 
 #include "cpu_instr.h"
 
-#include "failboy.h"
+#include "core.h"
 
 /* **************************************** */
 /* Operand fetch */

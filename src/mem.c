@@ -15,7 +15,7 @@
 
 #include <stdlib.h>
 
-#include "failboy.h"
+#include "core.h"
 
 /* ************************************************************** */
 /* cart.c */
@@ -67,6 +67,10 @@ void mem_free(void) {
   free(wram);
   vram = oam = hram = wram = NULL;
 }
+
+uint8_t *mem_wram(void) { return wram; }
+
+uint8_t *mem_hram(void) { return hram; }
 
 void mem_wram_bank(uint8_t bank) {
   if (bank == 0) {

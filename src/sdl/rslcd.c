@@ -55,7 +55,7 @@ static const struct color INK = {38, 54, 44};
 static const struct color SHEEN = {14, 15, 12}; /* added at the band's middle */
 
 /* how dark each pixel is right now, 0 to 1; the border of zeros spares drawing the shadows any bounds checks */
-static float ink[LCD_HEIGHT + 2][LCD_WIDTH + 2];
+static float ink[GB_LCD_HEIGHT + 2][GB_LCD_WIDTH + 2];
 
 /* Everything that only depends on the scale, worked out once per scale. */
 static int prepared_scale = 0;
@@ -67,9 +67,9 @@ static int sub_y0[RSLCD_MAX_SCALE];
 static float sub_wx[RSLCD_MAX_SCALE];
 static float sub_wy[RSLCD_MAX_SCALE];
 
-static float column_light[LCD_WIDTH * RSLCD_MAX_SCALE];
-static float row_light[LCD_HEIGHT * RSLCD_MAX_SCALE];
-static float sheen[(LCD_WIDTH + LCD_HEIGHT) * RSLCD_MAX_SCALE]; /* by x + y */
+static float column_light[GB_LCD_WIDTH * RSLCD_MAX_SCALE];
+static float row_light[GB_LCD_HEIGHT * RSLCD_MAX_SCALE];
+static float sheen[(GB_LCD_WIDTH + GB_LCD_HEIGHT) * RSLCD_MAX_SCALE]; /* by x + y */
 
 /* The shadow edge between two neighboring pixels: the weight of the second, at fraction f of the way from the */
 /* first's center to the second's. */
@@ -100,8 +100,8 @@ static float light_along(float t) {
 }
 
 static void prepare(int scale) {
-  int width = LCD_WIDTH * scale;
-  int height = LCD_HEIGHT * scale;
+  int width = GB_LCD_WIDTH * scale;
+  int height = GB_LCD_HEIGHT * scale;
   for (int s = 0; s < scale; ++s) {
     sub_pixel(scale, s, SHADOW_OFFSET_X, &sub_x0[s], &sub_wx[s]);
     sub_pixel(scale, s, SHADOW_OFFSET_Y, &sub_y0[s], &sub_wy[s]);
@@ -122,19 +122,19 @@ static void prepare(int scale) {
   prepared_scale = scale;
 }
 
-void rslcd_reset(const uint8_t *frame) {
-  for (int y = 0; y < LCD_HEIGHT; ++y) {
-    for (int x = 0; x < LCD_WIDTH; ++x) {
-      ink[y + 1][x + 1] = shade_ink[frame[y * LCD_WIDTH + x]];
+void rslcd_reset(const uint16_t *frame) {
+  for (int y = 0; y < GB_LCD_HEIGHT; ++y) {
+    for (int x = 0; x < GB_LCD_WIDTH; ++x) {
+      ink[y + 1][x + 1] = shade_ink[frame[y * GB_LCD_WIDTH + x]];
     }
   }
 }
 
-void rslcd_frame(const uint8_t *frame) {
-  for (int y = 0; y < LCD_HEIGHT; ++y) {
-    for (int x = 0; x < LCD_WIDTH; ++x) {
+void rslcd_frame(const uint16_t *frame) {
+  for (int y = 0; y < GB_LCD_HEIGHT; ++y) {
+    for (int x = 0; x < GB_LCD_WIDTH; ++x) {
       float *dark = &ink[y + 1][x + 1];
-      float target = shade_ink[frame[y * LCD_WIDTH + x]];
+      float target = shade_ink[frame[y * GB_LCD_WIDTH + x]];
       float rate = FALL_RATE;
       if (target > *dark) {
         rate = RISE_RATE;
@@ -157,11 +157,11 @@ void rslcd_draw(int scale, uint32_t *pixels, int pitch) {
   }
   int grid = scale >= GRID_MIN_SCALE;
 
-  for (int row = 0; row < LCD_HEIGHT; ++row) {
+  for (int row = 0; row < GB_LCD_HEIGHT; ++row) {
     /* for each pixel in the row: how much reflected light gets through it, and the color its ink adds */
-    float keep[LCD_WIDTH];
-    struct color added[LCD_WIDTH];
-    for (int column = 0; column < LCD_WIDTH; ++column) {
+    float keep[GB_LCD_WIDTH];
+    struct color added[GB_LCD_WIDTH];
+    for (int column = 0; column < GB_LCD_WIDTH; ++column) {
       float dark = ink[row + 1][column + 1];
       keep[column] = 1 - dark;
       added[column].r = INK.r * dark;
@@ -172,10 +172,10 @@ void rslcd_draw(int scale, uint32_t *pixels, int pitch) {
     for (int sy = 0; sy < scale; ++sy) {
       int y = row * scale + sy;
       /* the light left over after the shadows, blended down to this line of output (with the border, index + 1) */
-      float lit[LCD_WIDTH + 2];
+      float lit[GB_LCD_WIDTH + 2];
       const float *upper = ink[row + sub_y0[sy] + 1];
       const float *lower = ink[row + sub_y0[sy] + 2];
-      for (int i = 0; i < LCD_WIDTH + 2; ++i) {
+      for (int i = 0; i < GB_LCD_WIDTH + 2; ++i) {
         lit[i] = 1 - (upper[i] + (lower[i] - upper[i]) * sub_wy[sy]) * SHADOW_STRENGTH;
       }
       struct color base = {REFLECTOR.r * row_light[y], REFLECTOR.g * row_light[y], REFLECTOR.b * row_light[y]};
@@ -183,7 +183,7 @@ void rslcd_draw(int scale, uint32_t *pixels, int pitch) {
       uint32_t *out = pixels + y * pitch;
 
       int x = 0;
-      for (int column = 0; column < LCD_WIDTH; ++column) {
+      for (int column = 0; column < GB_LCD_WIDTH; ++column) {
         for (int sx = 0; sx < scale; ++sx, ++x) {
           int i = column + sub_x0[sx] + 1;
           float light = (lit[i] + (lit[i + 1] - lit[i]) * sub_wx[sx]) * column_light[x];

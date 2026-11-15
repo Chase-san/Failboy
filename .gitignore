@@ -71,3 +71,6 @@ Desktop.ini
 
 # Other windows files
 *.bat
+
+# the user's own cartridge dumps: private, never committed
+rom_backup/

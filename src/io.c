@@ -13,10 +13,7 @@
  * GNU General Public License for more details.
  */
 
-#include <stdio.h>
-#include <string.h>
-
-#include "failboy.h"
+#include "core.h"
 
 enum {
   P1_DIRECTIONS = 0x10, /* clear to read the D-pad */
@@ -94,10 +91,6 @@ static int dma_bus = BUS_EXTERNAL; /* the one dma_source is on */
 static int dma_next = DMA_IDLE;
 static uint16_t dma_restart = 0; /* the source written, starting when dma_starting runs out */
 static int dma_starting = 0;
-
-/* The last few characters sent over serial, to spot Blargg's "Passed"/"Failed". */
-static char serial_tail[6];
-static int serial_result = SERIAL_NONE;
 
 /* JOYPAD_* buttons held down */
 static uint8_t joypad = 0;
@@ -261,26 +254,6 @@ void io_tick(uint32_t cycles) {
   }
 }
 
-static void serial_out(uint8_t c) {
-  FILE *out = stdout;
-  if (doctor) {
-    /* stdout is carrying the trace */
-    out = stderr;
-  }
-  fputc(c, out);
-  fflush(out);
-
-  memmove(serial_tail, serial_tail + 1, sizeof(serial_tail) - 1);
-  serial_tail[sizeof(serial_tail) - 1] = c;
-  if (memcmp(serial_tail, "Failed", sizeof(serial_tail)) == 0) {
-    serial_result = SERIAL_FAILED;
-  } else if (serial_result == SERIAL_NONE && memcmp(serial_tail, "Passed", sizeof(serial_tail)) == 0) {
-    serial_result = SERIAL_PASSED;
-  }
-}
-
-int io_serial_result(void) { return serial_result; }
-
 uint8_t io_read(uint16_t address) {
   if (is_video_register(address)) {
     return video_read(address);
@@ -351,9 +324,9 @@ void io_write(uint16_t address, uint8_t value) {
   switch (address) {
     case IO_SC:
       IO_REG(IO_SC) = value;
-      /* link cable for console ! :D */
+      /* the byte goes to the host, with nothing on the other end of the cable */
       if ((value & SC_TRANSFER) && (value & SC_INTERNAL_CLOCK)) {
-        serial_out(IO_REG(IO_SB));
+        host_serial(IO_REG(IO_SB));
         serial_bits = SERIAL_BITS;
       }
       break;
