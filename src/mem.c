@@ -13,7 +13,7 @@
  * GNU General Public License for more details.
  */
 
-#include <stdlib.h>
+#include <string.h>
 
 #include "core.h"
 
@@ -39,33 +39,20 @@ void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
 
 /* ************************************************************** */
 
-static uint8_t *wram;
-static uint8_t *hram;
-uint8_t *oam;
-uint8_t *vram;
+static uint8_t wram[WRAM_BANKS * WRAM_BANK_SIZE]; /* 8 kB of work RAM, or a CGB's 32 kB */
+static uint8_t hram[HRAM_SIZE];
+uint8_t oam[OAM_SIZE];
+uint8_t vram[VRAM_BANKS * VRAM_SIZE]; /* 8 kB of video RAM, or a CGB's 16 kB */
 
 /* where D000-DFFF is in wram: bank 1, unless a CGB picks another */
 static unsigned int wram_bank_offset = WRAM_BANK_SIZE;
 
-int mem_alloc(void) {
-  /* 8 kB of work RAM (32 kB on a CGB), 8 kB of video RAM (16 kB) */
-  wram = calloc(WRAM_BANKS, WRAM_BANK_SIZE);
-  hram = calloc(1, HRAM_SIZE);
-  oam = calloc(1, OAM_SIZE);
-  vram = calloc(VRAM_BANKS, VRAM_SIZE);
-  if (wram == NULL || hram == NULL || oam == NULL || vram == NULL) {
-    mem_free();
-    return 0;
-  }
-  return 1;
-}
-
-void mem_free(void) {
-  free(vram);
-  free(oam);
-  free(hram);
-  free(wram);
-  vram = oam = hram = wram = NULL;
+void mem_reset(void) {
+  memset(wram, 0, sizeof(wram));
+  memset(hram, 0, sizeof(hram));
+  memset(oam, 0, sizeof(oam));
+  memset(vram, 0, sizeof(vram));
+  wram_bank_offset = WRAM_BANK_SIZE;
 }
 
 uint8_t *mem_wram(void) { return wram; }

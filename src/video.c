@@ -282,7 +282,7 @@ static force_inline int object_shows(uint8_t lcdc, uint8_t attr, uint8_t bg_colo
   if (bg_color == 0) {
     return 1;
   }
-  if (model == MODEL_CGB) {
+  if (cgb_mode) {
     /* LCDC bit 0 takes the background's priority away, else either one's priority bit puts the background on top */
     return !(lcdc & LCDC_BG_ENABLE) || !((attr | bg_attr) & ATTR_BEHIND_BG);
   }
@@ -309,7 +309,7 @@ static void render_sprites(uint8_t lcdc, uint8_t ly, const uint8_t *bg_color, co
   }
 
   /* On the DMG the leftmost sprite wins, then the earliest in OAM: a stable sort by X. A CGB game goes by OAM alone. */
-  for (int i = 1; i < count && model != MODEL_CGB; ++i) {
+  for (int i = 1; i < count && !cgb_mode; ++i) {
     const uint8_t *obj = found[i];
     int j = i;
     for (; j > 0 && found[j - 1][OBJ_X] > obj[OBJ_X]; --j) {
@@ -336,7 +336,7 @@ static void render_sprites(uint8_t lcdc, uint8_t ly, const uint8_t *bg_color, co
       index &= OBJ_TALL_TILE_MASK;
     }
     const uint8_t *bank = vram;
-    if (model == MODEL_CGB) {
+    if (cgb_mode) {
       bank = tile_bank(attr);
     }
     const uint8_t *data =
@@ -361,7 +361,7 @@ static void render_sprites(uint8_t lcdc, uint8_t ly, const uint8_t *bg_color, co
       if (!object_shows(lcdc, attr, bg_color[x], bg_attrs[x])) {
         continue;
       }
-      if (model == MODEL_CGB) {
+      if (cgb_mode) {
         pixel[x] = color;
         palette[x] = PALETTES + (attr & ATTR_CGB_PALETTE);
       } else if (attr & ATTR_PALETTE) {
@@ -396,7 +396,7 @@ static void render_line(uint8_t ly) {
   uint8_t pixel[LCD_WIDTH];
   uint8_t palette[LCD_WIDTH];
 
-  if (model == MODEL_CGB) {
+  if (cgb_mode) {
     render_background(lcdc, ly, color, attrs);
     render_window(lcdc, color, attrs);
     for (int x = 0; x < LCD_WIDTH; ++x) {
@@ -422,7 +422,7 @@ static void render_line(uint8_t ly) {
 
   /* a DMG's shades are what shows; a CGB's color indexes go through its palettes */
   for (int x = 0; x < LCD_WIDTH; ++x) {
-    if (model == MODEL_DMG) {
+    if (!cgb) {
       frame[ly][x] = pixel[x];
     } else {
       frame[ly][x] = palette_color(palette[x], pixel[x]);
@@ -561,7 +561,7 @@ void video_tick(uint32_t cycles) {
 /* the whole screen one shade, on a DMG, or one color */
 static void fill(uint8_t shade, uint16_t color) {
   uint16_t value = color;
-  if (model == MODEL_DMG) {
+  if (!cgb) {
     value = shade;
   }
   for (int y = 0; y < LCD_HEIGHT; ++y) {
@@ -575,7 +575,7 @@ static void video_blank(void) { fill(0, WHITE); }
 
 /* The clock's stopped: the DMG's screen goes blank, and a CGB's black, its PPU running on without VRAM. */
 void video_stop(void) {
-  if (model == MODEL_DMG) {
+  if (!cgb) {
     video_blank();
   } else {
     fill(0, BLACK);
@@ -631,15 +631,32 @@ static void load_logo(void) {
   vram[LOGO_MAP_REGISTERED - VRAM_START] = REGISTERED_TILE;
 }
 
+void video_reset(void) {
+  memset(frame, 0, sizeof(frame));
+  memset(bg_palettes, 0, sizeof(bg_palettes));
+  memset(obj_palettes, 0, sizeof(obj_palettes));
+  frames = 0;
+  vram_bank = 0;
+  hdma_source = 0;
+  hdma_dest = 0;
+  hdma_blocks = 0;
+  hdma_status = HDMA_IDLE;
+  line_cycles = 0;
+  spare_cycles = 0;
+  window_line = 0;
+  window_triggered = 0;
+  stat_signal = 0;
+}
+
 /* the screen as the boot ROM leaves it */
 void video_bios_init(void) {
-  if (model == MODEL_DMG) {
+  if (!cgb) {
     load_logo();
     return;
   }
   memset(bg_palettes, BYTE_MASK, sizeof(bg_palettes)); /* white */
   memset(obj_palettes, BYTE_MASK, sizeof(obj_palettes));
-  if (model == MODEL_CGB_DMG) {
+  if (cgb && !cgb_mode) {
     set_palette(bg_palettes, 0, compat_background);
     set_palette(obj_palettes, 0, compat_objects);
     set_palette(obj_palettes, 1, compat_objects);

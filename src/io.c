@@ -13,6 +13,8 @@
  * GNU General Public License for more details.
  */
 
+#include <string.h>
+
 #include "core.h"
 
 enum {
@@ -97,11 +99,24 @@ static uint8_t joypad = 0;
 
 void io_request(uint8_t mask) { IO_REG(IO_IF) |= mask; }
 
+void io_reset(void) {
+  memset(io_reg, 0, sizeof(io_reg));
+  io_ie = 0;
+  div_counter = 0;
+  serial_bits = 0;
+  dma_source = 0;
+  dma_bus = BUS_EXTERNAL;
+  dma_next = DMA_IDLE;
+  dma_restart = 0;
+  dma_starting = 0;
+  joypad = 0;
+}
+
 void io_bios_init(void) {
   div_counter = DIV_AFTER_BOOT;
-  if (model == MODEL_CGB_DMG) {
+  if (cgb && !cgb_mode) {
     div_counter = DIV_AFTER_COMPAT_BOOT;
-  } else if (model == MODEL_CGB) {
+  } else if (cgb_mode) {
     div_counter = DIV_AFTER_CGB_BOOT;
   }
 }
@@ -132,7 +147,7 @@ static int is_video_register(uint16_t address) {
   if (address >= IO_LCDC && address <= IO_WX) {
     return address != IO_DMA;
   }
-  if (model != MODEL_CGB) {
+  if (!cgb_mode) {
     return 0;
   }
   return address == IO_VBK || (address >= IO_HDMA1 && address <= IO_HDMA5) ||
@@ -144,7 +159,7 @@ static int is_audio_register(uint16_t address) {
   if (address >= AUDIO_START && address <= AUDIO_END) {
     return 1;
   }
-  return model != MODEL_DMG && (address == IO_PCM12 || address == IO_PCM34);
+  return cgb && (address == IO_PCM12 || address == IO_PCM34);
 }
 
 static int timer_signal(void) {
@@ -192,7 +207,7 @@ static void div_set(uint16_t value) {
 
 /* CGB: STOP switches speed, if KEY1 is armed for it; returns whether it did */
 int io_speed_switch(void) {
-  if (model != MODEL_CGB || !(IO_REG(IO_KEY1) & KEY1_SWITCH)) {
+  if (!cgb_mode || !(IO_REG(IO_KEY1) & KEY1_SWITCH)) {
     return 0;
   }
   double_speed = !double_speed;
@@ -211,7 +226,7 @@ static int bus_of(uint16_t address) {
   if (address >= VRAM_START && address < VRAM_START + VRAM_SIZE) {
     return BUS_VRAM;
   }
-  if (address >= WRAM_START && model != MODEL_DMG) {
+  if (address >= WRAM_START && cgb) {
     return BUS_WRAM;
   }
   return BUS_EXTERNAL;
@@ -275,28 +290,28 @@ uint8_t io_read(uint16_t address) {
     case IO_DMA:
       return IO_REG(IO_DMA);
     case IO_KEY1:
-      if (model != MODEL_CGB) {
+      if (!cgb_mode) {
         return OPEN_BUS;
       }
       return KEY1_UNUSED | (double_speed * KEY1_DOUBLE) | IO_REG(IO_KEY1);
     case IO_SVBK:
-      if (model != MODEL_CGB) {
+      if (!cgb_mode) {
         return OPEN_BUS;
       }
       return SVBK_UNUSED | IO_REG(IO_SVBK);
     case IO_FF72:
     case IO_FF73:
-      if (model == MODEL_DMG) {
+      if (!cgb) {
         return OPEN_BUS;
       }
       return IO_REG(address);
     case IO_FF74:
-      if (model != MODEL_CGB) {
+      if (!cgb_mode) {
         return OPEN_BUS;
       }
       return IO_REG(IO_FF74);
     case IO_FF75:
-      if (model == MODEL_DMG) {
+      if (!cgb) {
         return OPEN_BUS;
       }
       return FF75_UNUSED | IO_REG(IO_FF75);
@@ -355,7 +370,7 @@ void io_write(uint16_t address, uint8_t value) {
       IO_REG(IO_KEY1) = value & KEY1_SWITCH;
       break;
     case IO_SVBK:
-      if (model == MODEL_CGB) {
+      if (cgb_mode) {
         IO_REG(IO_SVBK) = value & SVBK_BANK;
         mem_wram_bank(value & SVBK_BANK);
       }

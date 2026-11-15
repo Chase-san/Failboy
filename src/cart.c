@@ -100,6 +100,7 @@ static const unsigned int ram_sizes[6] = {0, 0x800, 0x2000, 0x8000, 0x20000, 0x1
 static const uint8_t *rom; /* the host's */
 static uint8_t *ram;
 
+static uint8_t cart_type = CART_ROM_ONLY; /* header byte 0x147 */
 static uint8_t cart_mode = MODE_MODELESS;
 static unsigned int rom_bank = 1; /* 2000-3fff (MBC1: its low 5 bits) */
 static uint8_t ram_bank = 0; /* 4000-5fff: RAM bank; MBC1: or bits 5-6 of the ROM bank; MBC3: or a clock register */
@@ -366,6 +367,7 @@ void mbc5_1_write(uint16_t address, uint8_t value) {
 void cart_mem_reset(void) {
   ext0_read_f = ext1_read_f = ext2_read_f = nil_read;
   ext0_write_f = ext1_write_f = ext2_write_f = nil_write;
+  cart_type = CART_ROM_ONLY;
   cart_mode = MODE_MODELESS;
   rom_bank = 1;
   ram_bank = 0;
@@ -422,17 +424,14 @@ enum gb_error cart_load(const uint8_t *data, uint32_t rom_size) {
       break;
     case CART_ROM_RAM:
     case CART_ROM_RAM_BATT:
-      /* no MBC to switch the RAM on and off, so it's always on */
       ext0_read_f = ext1_read_f = rom_read;
       ext2_read_f = banked_ram_read;
       ext2_write_f = banked_ram_write;
       ram_size = header_ram_size();
-      ram_enabled = 1;
       break;
     case CART_MBC1:
     case CART_MBC1_RAM:
     case CART_MBC1_RAM_BATT:
-      cart_mode = MODE_MBC1_16_8;
       ext0_read_f = mbc1_0_read;
       ext1_read_f = mbc1_1_read;
       ext2_read_f = mbc1_2_read;
@@ -495,7 +494,24 @@ enum gb_error cart_load(const uint8_t *data, uint32_t rom_size) {
   if (rtc) {
     rtc_reset();
   }
+  cart_type = type;
+  cart_reset();
   return GB_OK;
+}
+
+void cart_reset(void) {
+  cart_mode = MODE_MODELESS;
+  if (cart_type >= CART_MBC1 && cart_type <= CART_MBC1_RAM_BATT) {
+    cart_mode = MODE_MBC1_16_8;
+  }
+  rom_bank = 1;
+  ram_bank = 0;
+  /* with no MBC to switch the RAM on and off, it's always on */
+  ram_enabled = cart_type == CART_ROM_RAM || cart_type == CART_ROM_RAM_BATT;
+  /* a clock runs on through it, and RAM keeps what it holds, if there's a battery */
+  if (ram != NULL && !battery) {
+    memset(ram, 0, ram_size);
+  }
 }
 
 uint8_t *cart_ram(uint32_t *size) {

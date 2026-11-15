@@ -77,22 +77,15 @@ static const struct {
   const char *name;
   enum gb_revision revision;
 } modes[] = {
-    {"auto", GB_REVISION_AUTO},
-    {"dmg", GB_DMG_ABC},
-    {"cgb", GB_CGB_E},
-    {"cgbfb", GB_CGB_E}, /* once a mode of its own; a cgb falls back by itself now */
-    {"sgb", GB_SGB},
-    /* and the exact revisions */
-    {"dmg0", GB_DMG_0},
-    {"mgb", GB_MGB},
-    {"sgb2", GB_SGB2},
-    {"cgb0", GB_CGB_0},
-    {"cgba", GB_CGB_A},
-    {"cgbb", GB_CGB_B},
-    {"cgbc", GB_CGB_C},
-    {"cgbd", GB_CGB_D},
-    {"cgbe", GB_CGB_E},
-    {"agb", GB_AGB},
+    {"auto", GB_AUTO},
+    {"dmg", GB_DMG_AUTO},
+    {"cgb", GB_CGB_AUTO},
+    {"cgbfb", GB_CGB_AUTO}, /* once a mode of its own; a cgb falls back by itself now */
+    {"sgb", GB_SGB_AUTO},
+    /* consoles the core can't be yet */
+    {"mgb", GB_MGB_AUTO},
+    {"sgb2", GB_SGB2_AUTO},
+    {"agb", GB_AGB_AUTO},
 };
 
 /* --doctor: a Gameboy Doctor trace on stdout, which moves serial output to stderr */
@@ -129,8 +122,8 @@ static int usage(const char *name) {
   fprintf(stderr, "         auto  select based on the game\n");
   fprintf(stderr, "         dmg   original gameboy\n");
   fprintf(stderr, "         cgb   color gameboy, which runs an original gameboy game in its fallback mode\n");
-  fprintf(stderr, "         sgb   super gameboy (unimplemented)\n");
-  fprintf(stderr, "         or an exact revision: dmg0, mgb, sgb2, cgb0, cgba to cgbe, agb (most unimplemented)\n");
+  fprintf(stderr,
+          "         mgb, sgb, sgb2, agb   gameboy pocket, super gameboy (and 2), advance (all unimplemented)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image (a PPM for a Game Boy Color)\n");
@@ -415,8 +408,8 @@ int main(int argc, char *argv[]) {
   struct gb_config config = {0};
   config.revision = modes[mode].revision;
   /* Gameboy Doctor's logs start from the DMG's registers */
-  if (doctor && config.revision == GB_REVISION_AUTO) {
-    config.revision = GB_DMG_ABC;
+  if (doctor && config.revision == GB_AUTO) {
+    config.revision = GB_DMG_AUTO;
   }
   config.rom = rom;
   config.rom_size = rom_size;

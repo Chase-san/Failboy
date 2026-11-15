@@ -45,23 +45,17 @@ enum {
   GB_RTC_SIZE = 13,                             /* bytes of a cartridge clock's state */
 };
 
-/* The machine to be, down to the revision of its CPU, since they don't all behave alike. Most of them aren't */
-/* supported yet (gb_create() says so); the ones that are: GB_DMG_ABC, and GB_CGB_A to GB_CGB_E, all taken to be the */
-/* same so far. */
+/* The machine to be. A host picks the console, and the core picks which revision of it to be (they don't all */
+/* behave alike): the usual one. Asking for an exact revision will come once the core can tell them apart. So far */
+/* it can be GB_DMG_AUTO or GB_CGB_AUTO; gb_create() refuses the rest. */
 enum gb_revision {
-  GB_REVISION_AUTO, /* what the cartridge's header asks for: GB_CGB_E for a color game, GB_DMG_ABC for any other */
-  GB_DMG_0,         /* the original Game Boy; its first CPU, */
-  GB_DMG_ABC,       /* and the usual ones */
-  GB_MGB,           /* Game Boy Pocket */
-  GB_SGB,           /* Super Game Boy */
-  GB_SGB2,
-  GB_CGB_0, /* Game Boy Color */
-  GB_CGB_A,
-  GB_CGB_B,
-  GB_CGB_C,
-  GB_CGB_D,
-  GB_CGB_E,
-  GB_AGB, /* a Game Boy Advance, being a Game Boy Color */
+  GB_AUTO,      /* what the cartridge's header asks for: GB_CGB_AUTO for a color game, GB_DMG_AUTO for any other */
+  GB_DMG_AUTO,  /* the original Game Boy */
+  GB_MGB_AUTO,  /* Game Boy Pocket */
+  GB_SGB_AUTO,  /* Super Game Boy */
+  GB_SGB2_AUTO, /* Super Game Boy 2 */
+  GB_CGB_AUTO,  /* Game Boy Color, which runs an original Game Boy's game in its compatibility mode */
+  GB_AGB_AUTO,  /* a Game Boy Advance, being a Game Boy Color */
   GB_REVISIONS,
 };
 
@@ -157,16 +151,18 @@ struct gb_config {
 
 /* Makes a Game Boy with the cartridge in, as its boot ROM leaves it, and stores it in *gb: no buttons held, and its */
 /* RAM (the cartridge's too) all zeros, until the host loads a save. For now the core keeps its state in globals, so */
-/* there can only be one, and only one per process: after the first, even once that's destroyed, this fails with */
-/* GB_ERROR_BUSY. So there's no resetting one yet, either. */
+/* there can only be one at a time: until that one's destroyed, this fails with GB_ERROR_BUSY. */
 enum gb_error gb_create(const struct gb_config *config, struct gb **gb);
 void gb_destroy(struct gb *gb);
+
+/* Switches it off and on again: everything as gb_create() left it, the counts of ticks and frames too, but for what */
+/* the cartridge's battery keeps, its RAM and its clock. Not from a callback. */
+void gb_reset(struct gb *gb);
 
 /* The callbacks it was made with, which can be changed: a tool that's handed a Game Boy can put its own in, and call */
 /* the ones it found there. */
 struct gb_host *gb_host(struct gb *gb);
 
-enum gb_revision gb_revision(const struct gb *gb); /* the one it is, where the config said GB_REVISION_AUTO */
 enum gb_pixel_format gb_pixel_format(const struct gb *gb);
 
 /* Running. Each returns the ticks it ran for, which can be a few more than asked: an instruction is always finished. */

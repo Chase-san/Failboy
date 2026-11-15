@@ -16,6 +16,8 @@
 /* The APU: two square channels (the first with a frequency sweep), a wave channel and a noise channel, clocked by */
 /* the 512 Hz frame sequencer and mixed down to stereo, which the front end takes as samples at AUDIO_RATE. */
 
+#include <string.h>
+
 #include "core.h"
 
 enum {
@@ -341,7 +343,7 @@ static void set_power(int on) {
     }
     for (int ch = 0; ch < CHANNELS; ++ch) {
       channels[ch].on = 0;
-      if (model != MODEL_DMG) {
+      if (cgb) {
         channels[ch].length = 0;
       }
     }
@@ -564,7 +566,7 @@ void audio_write(uint16_t address, uint8_t value) {
   }
   if (!(IO_REG(NR52) & NR52_POWER)) {
     /* while it's off, the DMG's length counters can still be written */
-    if (model == MODEL_DMG && (address == NR11 || address == NR21 || address == NR31 || address == NR41)) {
+    if (!cgb && (address == NR11 || address == NR21 || address == NR31 || address == NR41)) {
       load_length(ch, value);
     }
     return;
@@ -610,6 +612,25 @@ const int16_t *audio_samples(unsigned int *frames) {
   *frames = sample_frames;
   sample_frames = 0;
   return samples;
+}
+
+void audio_reset(void) {
+  memset(channels, 0, sizeof(channels));
+  sequencer = 0;
+  sweep_on = 0;
+  sweep_timer = 0;
+  sweep_frequency = 0;
+  sweep_negated = 0;
+  wave_sample = 0;
+  lfsr = LFSR_RESET;
+  pending = 0;
+  handing_over = 0;
+  levels[LEFT] = levels[RIGHT] = 0;
+  levels_stale = 1;
+  sums[LEFT] = sums[RIGHT] = 0;
+  sample_clock = 0;
+  capacitors[LEFT] = capacitors[RIGHT] = 0;
+  sample_frames = 0;
 }
 
 /* How the boot ROM leaves the APU: on, with channel 1 still going after the startup chime, faded out. */

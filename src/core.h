@@ -49,14 +49,30 @@ enum {
 /* gb.c */
 extern int doctor; /* being as Gameboy Doctor's logs expect */
 
-/* the machine emulated, as far as the modules tell them apart: from the host's revision and the cartridge's header */
+/* The machine emulated: its console in the high nibble, the revision of that console's CPU in the low one. Hosts */
+/* only get to ask for a console (failboy.h's gb_revision); this is the one that was picked for them. */
 enum {
-  MODEL_DMG,     /* the original Game Boy */
-  MODEL_CGB_DMG, /* a Game Boy Color running an original Game Boy game, in its compatibility mode */
-  MODEL_CGB,     /* a Game Boy Color running a color game */
+  REVISION_DMG_0 = 0x00, /* the original Game Boy */
+  REVISION_DMG_A,
+  REVISION_DMG_B,
+  REVISION_DMG_C,
+  REVISION_MGB = 0x10,   /* Game Boy Pocket */
+  REVISION_SGB = 0x20,   /* Super Game Boy */
+  REVISION_SGB2 = 0x30,  /* Super Game Boy 2 */
+  REVISION_CGB_0 = 0x40, /* Game Boy Color */
+  REVISION_CGB_A,
+  REVISION_CGB_B,
+  REVISION_CGB_C,
+  REVISION_CGB_D,
+  REVISION_CGB_E,
+  REVISION_AGB = 0x50,     /* a Game Boy Advance, being a Game Boy Color */
+  REVISION_CONSOLE = 0xF0, /* the bits that say which console */
 };
 
-extern int model;
+extern int revision;
+extern uint8_t cgb; /* it's a Game Boy Color */
+extern uint8_t
+    cgb_mode; /* and running a color game, so all it adds is switched on; if not, it's in compatibility mode */
 
 /* the host's callbacks, each doing nothing if the host left it out */
 void host_frame(void);                         /* a frame is finished */
@@ -68,10 +84,11 @@ int64_t host_clock(void);                      /* Unix time, or 0 */
 /* cart.c */
 enum gb_error cart_load(const uint8_t *, uint32_t); /* the ROM stays the caller's */
 void cart_free(void);
-uint8_t *cart_ram(uint32_t *);                       /* all of the cartridge's RAM, and its size; NULL if it has none */
-int cart_cgb(void);                                  /* the header says the game can use a Game Boy Color */
-unsigned int cart_battery_ram_size(void);            /* 0 unless the cartridge RAM has a battery */
-void cart_read_battery_ram(uint8_t *, unsigned int); /* copies the battery RAM out, to save it */
+void cart_reset(void);         /* the mapper as the power coming on leaves it; RAM without a battery is cleared */
+uint8_t *cart_ram(uint32_t *); /* all of the cartridge's RAM, and its size; NULL if it has none */
+int cart_cgb(void);            /* the header says the game can use a Game Boy Color */
+unsigned int cart_battery_ram_size(void);                   /* 0 unless the cartridge RAM has a battery */
+void cart_read_battery_ram(uint8_t *, unsigned int);        /* copies the battery RAM out, to save it */
 void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
 
 /* the MBC3's clock */
@@ -138,6 +155,7 @@ extern uint8_t io_reg[IO_SIZE]; /* FF00-FF7F */
 extern uint8_t io_ie;           /* FFFF */
 #define IO_REG(address) (io_reg[(address) & (IO_SIZE - 1)])
 
+void io_reset(void);     /* as the power coming on leaves it; the same for the other modules' */
 void io_bios_init(void); /* the divider as the boot ROM leaves it */
 void io_request(uint8_t);
 void io_tick(uint32_t);
@@ -155,6 +173,7 @@ enum {
   FRAME_CYCLES = LCD_LINES * LINE_CYCLES,
 };
 
+void video_reset(void);
 void video_bios_init(void); /* the logo or palettes the boot ROM leaves */
 void video_tick(uint32_t);
 void video_stop(void); /* the screen with the clock stopped, by STOP */
@@ -171,6 +190,7 @@ enum {
   AUDIO_RATE = CLOCK_HZ / AUDIO_SAMPLE_CYCLES, /* stereo samples a second, 47662 (and a half) */
 };
 
+void audio_reset(void);
 void audio_bios_init(void);
 void audio_tick(uint32_t);
 void audio_sequencer_clock(void); /* the frame sequencer's 512 Hz clock, which comes off DIV */
@@ -194,14 +214,13 @@ enum {
   HRAM_SIZE = 0x7F,
 };
 
-int mem_alloc(void);
-void mem_free(void);
+void mem_reset(void);        /* all of it zeros */
 void mem_wram_bank(uint8_t); /* CGB: the bank at D000-DFFF */
 uint8_t *mem_wram(void);     /* all WRAM_BANKS of it */
 uint8_t *mem_hram(void);
 
-extern uint8_t *oam;
-extern uint8_t *vram;
+extern uint8_t oam[];
+extern uint8_t vram[]; /* VRAM_BANKS of it */
 
 uint8_t mem_read(uint16_t);
 void mem_write(uint16_t, uint8_t);

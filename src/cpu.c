@@ -296,13 +296,13 @@ int cpu_bios_init(void) {
   r.BC = 0x13;
   r.DE = 0xD8;
   r.HL = 0x14D;
-  if (model == MODEL_CGB) {
+  if (cgb_mode) {
     r.A = 0x11;
     r.F = 0x80;
     r.BC = 0x0000;
     r.DE = 0xFF56;
     r.HL = 0x000D;
-  } else if (model == MODEL_CGB_DMG) {
+  } else if (cgb) {
     r.A = 0x11;
     r.F = 0x80;
     r.BC = 0x0000;
@@ -312,6 +312,8 @@ int cpu_bios_init(void) {
   r.PC = 0x100;
   r.SP = 0xFFFE;
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
+  cycle_counter = 0;
+  bus_cycles = 0;
 
   io_bios_init();           // DIV
   mem_write(0xFF05, 0x00);  // TIMA

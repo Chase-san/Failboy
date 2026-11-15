@@ -19,29 +19,33 @@
 
 #include "core.h"
 
-/* The one Game Boy. The machine itself is still in each module's globals, so this is only what the host gave it and */
-/* what its runs keep count of. */
+/* The one Game Boy. The machine itself is in each module's globals, so this is only what the host gave it and what */
+/* its runs keep count of. */
 struct gb {
   struct gb_host host;
-  enum gb_revision revision;
   uint64_t ticks;
   int stop;   /* gb_stop() was called; the run under way ends */
   int exists; /* made, and not yet destroyed */
 };
 
 static struct gb gb_only;
-static int gb_made = 0; /* gb_only has been used: the modules' globals aren't fresh any more */
 
 int doctor = 0;
-int model = MODEL_DMG;
+int revision = REVISION_DMG_B;
+uint8_t cgb = 0;
+uint8_t cgb_mode = 0;
 
-/* What each revision is, as far as the core can tell them apart yet. */
+/* The revision the core is, for each console a host can ask for, and whether it can be it yet. */
 static const struct {
-  uint8_t supported;
-  uint8_t cgb; /* a Game Boy Color */
-} revisions[GB_REVISIONS] = {
-    [GB_DMG_ABC] = {1, 0}, [GB_CGB_A] = {1, 1}, [GB_CGB_B] = {1, 1},
-    [GB_CGB_C] = {1, 1},   [GB_CGB_D] = {1, 1}, [GB_CGB_E] = {1, 1},
+  int revision;
+  int supported;
+} consoles[GB_REVISIONS] = {
+    [GB_DMG_AUTO] = {REVISION_DMG_B, 1},  //
+    [GB_MGB_AUTO] = {REVISION_MGB, 0},    //
+    [GB_SGB_AUTO] = {REVISION_SGB, 0},    //
+    [GB_SGB2_AUTO] = {REVISION_SGB2, 0},  //
+    [GB_CGB_AUTO] = {REVISION_CGB_E, 1},  //
+    [GB_AGB_AUTO] = {REVISION_AGB, 0},    //
 };
 
 /* **************************************** */
@@ -83,9 +87,22 @@ int64_t host_clock(void) {
 /* **************************************** */
 /* Making one */
 
+/* The power comes on: every module back to how it starts, then as the boot ROM leaves it. Returns 0 if the CPU's */
+/* flags are laid out wrongly (see cpu_bios_init()). */
+static int power_on(void) {
+  mem_reset();
+  cart_reset();
+  io_reset();
+  video_reset();
+  audio_reset();
+  gb_only.ticks = 0;
+  gb_only.stop = 0;
+  return cpu_bios_init();
+}
+
 enum gb_error gb_create(const struct gb_config *config, struct gb **gb) {
   *gb = NULL;
-  if (gb_made) {
+  if (gb_only.exists) {
     return GB_ERROR_BUSY;
   }
   if ((unsigned int)config->revision >= GB_REVISIONS) {
@@ -98,40 +115,29 @@ enum gb_error gb_create(const struct gb_config *config, struct gb **gb) {
     return error;
   }
 
-  enum gb_revision revision = config->revision;
-  if (revision == GB_REVISION_AUTO) {
-    revision = GB_DMG_ABC;
+  enum gb_revision console = config->revision;
+  if (console == GB_AUTO) {
+    console = GB_DMG_AUTO;
     if (cart_cgb()) {
-      revision = GB_CGB_E;
+      console = GB_CGB_AUTO;
     }
   }
-  if (!revisions[revision].supported) {
+  if (!consoles[console].supported) {
     cart_free();
     return GB_ERROR_REVISION;
   }
+  revision = consoles[console].revision;
+  int kind = revision & REVISION_CONSOLE;
+  cgb = kind == REVISION_CGB_0 || kind == REVISION_AGB;
   /* a Game Boy Color runs an original Game Boy's game in its compatibility mode */
-  model = MODEL_DMG;
-  if (revisions[revision].cgb && cart_cgb()) {
-    model = MODEL_CGB;
-  } else if (revisions[revision].cgb) {
-    model = MODEL_CGB_DMG;
-  }
+  cgb_mode = cgb && cart_cgb();
   doctor = config->doctor != 0;
 
-  if (!mem_alloc()) {
-    cart_free();
-    return GB_ERROR_MEMORY;
-  }
-  if (!cpu_bios_init()) {
-    mem_free();
+  if (!power_on()) {
     cart_free();
     return GB_ERROR_BUILD;
   }
-  gb_only.revision = revision;
-  gb_only.ticks = 0;
-  gb_only.stop = 0;
   gb_only.exists = 1;
-  gb_made = 1;
   *gb = &gb_only;
   return GB_OK;
 }
@@ -141,20 +147,22 @@ void gb_destroy(struct gb *gb) {
     return;
   }
   gb->exists = 0;
-  mem_free();
   cart_free();
+}
+
+void gb_reset(struct gb *gb) {
+  (void)gb;
+  power_on();
 }
 
 struct gb_host *gb_host(struct gb *gb) { return &gb->host; }
 
-enum gb_revision gb_revision(const struct gb *gb) { return gb->revision; }
-
 enum gb_pixel_format gb_pixel_format(const struct gb *gb) {
   (void)gb;
-  if (model == MODEL_DMG) {
-    return GB_PIXELS_SHADES;
+  if (cgb) {
+    return GB_PIXELS_COLORS;
   }
-  return GB_PIXELS_COLORS;
+  return GB_PIXELS_SHADES;
 }
 
 /* **************************************** */
