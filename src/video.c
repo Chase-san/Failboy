@@ -188,10 +188,10 @@ enum {
   OBJ_NONE,    /* no fetch going */
   OBJ_FETCHER, /* letting the background's fetcher get as far as its tile's low bits */
   OBJ_SCROLL,  /* an object at the left edge has waited out the scroll */
-  OBJ_SETTLE,
-  OBJ_LOW,
-  OBJ_LAST, /* from here on, switching objects off doesn't stop it */
-  OBJ_HIGH,
+  OBJ_SETTLE,  /* its tile and flags are read from OAM */
+  OBJ_LOW,     /* and where its row's low bits are worked out, */
+  OBJ_LAST,    /* from here on, switching objects off doesn't stop it */
+  OBJ_HIGH,    /* then its high bits', and the row goes into the objects' FIFO */
   OBJ_ABORTED, /* objects were switched off partway: back to the pixels */
 };
 
@@ -275,7 +275,6 @@ struct ppu {
 
   /* the pixels */
   int16_t x;        /* the next to come out of the FIFO: negative ones are thrown away */
-  uint8_t lcd_x;    /* where the LCD puts it, which the window can knock out of step */
   uint8_t scrolled; /* SCX's low 3 bits, as many pixels as were thrown away for them */
   uint8_t fetch_step;
   uint8_t fetch_y; /* CGB: the row, as it was for the tile's index */
@@ -909,20 +908,13 @@ static void pixel_pop(void) {
     ++p.x;
     return;
   }
-  if (p.lcd_x < LCD_WIDTH) {
-    p.frame[p.line][p.lcd_x] = mix(color, attr, obj_color, obj_attr);
-  }
+  p.frame[p.line][p.x] = mix(color, attr, obj_color, obj_attr);
   ++p.x;
-  ++p.lcd_x;
   p.window_fetching = 0;
 }
 
 /* mode 3 is over, as long as the scroll, the window and the objects made it */
 static void drawing_end(void) {
-  /* a line the window's left a pixel short is filled out with its last */
-  for (; p.lcd_x > 0 && p.lcd_x < LCD_WIDTH; ++p.lcd_x) {
-    p.frame[p.line][p.lcd_x] = p.frame[p.line][p.lcd_x - 1];
-  }
   p.drawing = 0;
   set_mode(MODE_HBLANK);
   lock(0);
@@ -937,7 +929,6 @@ static void pixels_start(void) {
   }
   p.drawing = 1;
   p.x = X_START;
-  p.lcd_x = 0;
   p.scrolled = 0;
   p.fetch_step = 0;
   /* a tile's worth of nothing to start with, which only takes time */
