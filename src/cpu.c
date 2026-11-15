@@ -108,7 +108,9 @@ void bus_idle(void) {
 }
 
 /* An M-cycle of HALT. The halted CPU looks for interrupts halfway through it, so one the PPU raises in the second */
-/* half doesn't wake it until the next. */
+/* half doesn't wake it until the next. That's fitted to a DMG (Mooneye's hblank_ly_scx_timing and intr_2 tests want */
+/* it); a CGB is given the same, at either speed, with nothing to check it against. Only the PPU's interrupts are */
+/* held to it: the timer's and serial port's come at the end of an M-cycle and wake the CPU there, as before. */
 static void halt_cycle(void) {
   uint8_t before;
   run_machine(M_CYCLE);

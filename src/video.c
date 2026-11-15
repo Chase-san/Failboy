@@ -13,6 +13,51 @@
  * GNU General Public License for more details.
  */
 
+/* The PPU, a dot (T-cycle) at a time. A line is the OAM scan, which lists up to 10 objects by X; then the drawing, */
+/* where a fetcher reads the background's or window's tiles a row at a time into one FIFO, objects' rows are fetched */
+/* into another as the pixels reach them (which holds the pixels up), and a pixel a dot comes out of both through */
+/* LCDC and the palettes as they are at that dot; then HBlank. So mode 3 is as long as the scroll, the window and */
+/* the objects make it, and a register written partway along a line changes the rest of it. */
+/* */
+/* What a DMG does is taken from tests that give their own figures: Mooneye's acceptance/ppu for when LY, the modes, */
+/* the interrupts and the locks on VRAM and OAM come, and mealybug-tearoom-tests' pictures (from a DMG-CPU B "blob") */
+/* for the pixels. The shootout battery's mealybug, Mooneye ppu, acid, daid and strikethrough tests all pass. */
+/* */
+/* Where it's known to differ from the hardware, or is a guess: */
+/* - The OAM bug isn't emulated: on a DMG, a 16-bit INC or DEC (and some other instructions) of a register pointing */
+/*   into FE00-FEFF during the OAM scan corrupts OAM. Blargg's oam_bug 2, 4, 5 and 8 fail for it; it needs the CPU's */
+/*   instructions to tell the PPU. */
+/* - A CGB has no schedule of its own. It runs the DMG's with three numbers fitted to daid's ppu_scanline_bgp and */
+/*   speed_switch_timing tests and to cgb-acid-hell (CGB_AHEAD, CGB_PIXELS_EARLY, CGB_PALETTE_WRITE_LEAD), which */
+/*   nothing else checks. Its locks on VRAM and OAM are the DMG's but for two details, though Mooneye's lcdon tests */
+/*   say a real one differs; so is its line 153 (LY reading 0), from memory of how a CGB-E does it. */
+/* - A CGB's writes land whole at the end of their M-cycle, bar the palettes' lead and LCDC's tile data glitch, of */
+/*   which only one case is done (a tile index under 128 read as its own row). The rest of what a CGB does with */
+/*   writes during mode 3 isn't, and mealybug's CGB pictures aren't in the battery, so they haven't been tried. */
+/* - A CGB's palette RAM can be read and written during mode 3, where the real one's is locked. */
+/* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
+/* - A DMG's write to STAT doesn't switch all its interrupt sources on for a moment, as the real one's does. */
+/* - A window starting a pixel late (window_check) puts the LCD a pixel out of step with the PPU on some DMGs. It */
+/*   doesn't here, which is what mealybug's "blob" pictures show, and not its m3_lcdc_win_en_change_multiple_wx */
+/*   picture from a DMG-CPU B. */
+/* - The window at WX 166 only moves its line counter (DMG); the real one's is said to start during HBlank. WY is */
+/*   compared twice a line (as the pixels start, and near the line's end), where the hardware may do it more often. */
+/* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
+/*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and on a CGB or at double */
+/*   speed which half of the M-cycle it is, is a guess. */
+/* - VRAM DMA copies in no time, with the CPU not held up; an HBlank copy's block goes at the HBlank interrupt's */
+/*   dot, and one started while STAT shows mode 0 goes at once, which the first dot of a line and the line after the */
+/*   LCD comes on also show. */
+/* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
+/* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
+/*   at once. */
+/* - Where the boot ROM leaves the PPU (BOOT_DOT, in line 0's OAM scan) is taken, not measured; a real DMG's is said */
+/*   to hand over in VBlank. */
+/* - A line with more to fetch than there's time for is cut off at its end, rather than running into the next. */
+/* - Outside this file: a halted CPU's look for interrupts halfway through an M-cycle (halt_cycle, cpu.c) is what */
+/*   Mooneye's hblank_ly_scx_timing wants of a DMG, and is done the same on a CGB and at double speed unchecked; and */
+/*   the wait after a speed switch (STOP, cpu_instr.c) is fitted for going to double speed only. */
+
 #include <string.h>
 
 #include "core.h"

@@ -793,7 +793,8 @@ void HALT(void) {
 
 enum {
   /* T-cycles at the normal speed that a speed switch stops the CPU for, the rest of the machine running on: a */
-  /* little over 2^17 at the double speed */
+  /* little over 2^17 at the double speed. Fitted to daid's speed_switch_timing tests, which only go from normal to */
+  /* double; coming back is given the same wait, rounded down to an M-cycle, unchecked. Nothing cuts it short. */
   SPEED_SWITCH_CYCLES = 0x10004,
 };
 
