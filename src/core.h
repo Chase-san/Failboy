@@ -143,6 +143,7 @@ void io_joypad(uint8_t);       /* the GB_BUTTON_s held down */
 int io_speed_switch(void);     /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
 int io_dma_conflict(uint16_t); /* the CPU's access collides with OAM DMA: it's to OAM, or the bus DMA is reading */
 uint8_t io_dma_read(uint16_t); /* what the CPU reads then */
+int io_dma_byte(void);         /* the byte of OAM that DMA wrote in the last M-cycle, or -1 */
 
 /* video.c */
 enum {

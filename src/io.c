@@ -249,6 +249,14 @@ uint8_t io_dma_read(uint16_t address) {
   return mem_read(dma_source + dma_next);
 }
 
+/* the byte of OAM that DMA wrote in the M-cycle just run, or -1 with none going */
+int io_dma_byte(void) {
+  if (dma_next == 0 || dma_next == DMA_IDLE) {
+    return -1;
+  }
+  return dma_next - 1;
+}
+
 static void dma_cycle(void) {
   if (dma_next < DMA_IDLE) {
     oam[dma_next] = mem_read(dma_source + dma_next);

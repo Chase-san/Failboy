@@ -54,14 +54,17 @@ void bus_sync(void) {
   }
 }
 
-/* Runs the rest of the machine for some of the CPU's T-cycles: the timer and serial at the CPU's speed, the PPU and */
-/* APU at the normal one. */
+/* Runs the rest of the machine for some of the CPU's M-cycles: the timer and serial at the CPU's speed, the PPU and */
+/* APU at the normal one. The PPU is never left more than an M-cycle behind, which is where OAM DMA has got to when */
+/* it runs. */
 static void run_machine(uint32_t cycles) {
-  io_tick(cycles);
-  cycles >>= double_speed;
-  audio_tick(cycles);
-  if (!doctor) {
-    video_owed += cycles;
+  for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
+    bus_sync();
+    io_tick(M_CYCLE);
+    audio_tick(M_CYCLE >> double_speed);
+    if (!doctor) {
+      video_owed += M_CYCLE >> double_speed;
+    }
   }
 }
 

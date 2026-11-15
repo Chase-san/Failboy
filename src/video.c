@@ -67,6 +67,7 @@ enum {
   FIRST_LINE_DOT = 5,   /* where the line is as the M-cycle of the write that switched the LCD on ends */
   FIRST_LINE_LATE = 2,  /* dots late that line's drawing is */
   BOOT_DOT = 5,         /* where the boot ROM is taken to leave line 0 */
+  DMG_M_CYCLE_DOT = 1,  /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
   CGB_AHEAD = 2,        /* a CGB's PPU is that much further on than a DMG's, against the CPU's M-cycles */
   CGB_PIXELS_EARLY = 2, /* and its pixels start that much sooner in the line */
   CGB_PALETTE_WRITE_LEAD = 2,
@@ -205,7 +206,6 @@ enum {
   MAP_MASK = MAP_WIDTH - 1,
   TILE_ROW_MASK = TILE_SIZE - 1,
   FIFO_MASK = TILE_SIZE - 1,
-  LOCKED = 0xFF, /* what the CPU reads from VRAM or OAM while the PPU has it */
   TILE_GLITCH_FROM = 0x80,
 };
 
@@ -270,6 +270,7 @@ struct ppu {
   /* the line's objects, rightmost first, and of those at one X the last in OAM first: fetched from the end */
   uint8_t objects;
   uint8_t object_x[OBJ_PER_LINE];
+  uint8_t object_y[OBJ_PER_LINE];
   uint8_t object_index[OBJ_PER_LINE];
 
   /* the pixels */
@@ -293,6 +294,8 @@ struct ppu {
   uint8_t obj_pixels;
   uint8_t obj_step;
   uint8_t obj_wait;
+  uint8_t obj_tile; /* of the object being fetched, from OAM */
+  uint8_t obj_flags;
   uint16_t obj_low_address;
   uint8_t scroll_penalty; /* dots the first object at the left edge has to wait for the scroll */
 
@@ -510,26 +513,44 @@ static void lock(uint8_t locked) {
 /* **************************************** */
 /* Mode 2: the OAM scan, for the first 10 objects that cover the line */
 
+/* The PPU's own read of OAM. OAM DMA takes OAM's address lines for the second half of each of its M-cycles, to */
+/* write its byte, and a read by the PPU then gets the pair of bytes DMA is at, whichever it asked for: the first of */
+/* them for an even address, the second for an odd one. */
+static uint8_t oam_peek(int address) {
+  int dma = io_dma_byte();
+  int phase = DMG_M_CYCLE_DOT;
+  if (cgb) {
+    phase += CGB_AHEAD;
+  }
+  if (dma >= 0 && ((p.dot - phase) & (M_CYCLE - 1)) >= M_CYCLE / 2) {
+    return oam[(dma & ~1) | (address & 1)];
+  }
+  return oam[address];
+}
+
 static void scan_object(int index) {
-  const uint8_t *obj = &oam[index * OBJ_BYTES];
+  uint8_t y = oam_peek(index * OBJ_BYTES + OBJ_Y);
+  uint8_t x = oam_peek(index * OBJ_BYTES + OBJ_X);
   int height = TILE_SIZE;
   if (IO_REG(IO_LCDC) & LCDC_OBJ_TALL) {
     height = TILE_SIZE * 2;
   }
-  int top = obj[OBJ_Y] - OBJ_Y_OFFSET;
+  int top = y - OBJ_Y_OFFSET;
   if (p.objects == OBJ_PER_LINE || p.line < top || p.line >= top + height) {
     return;
   }
   /* kept sorted, so that the leftmost, and of those the first in OAM, is at the end */
   int at = 0;
-  while (at < p.objects && p.object_x[at] > obj[OBJ_X]) {
+  while (at < p.objects && p.object_x[at] > x) {
     ++at;
   }
   for (int i = p.objects; i > at; --i) {
     p.object_x[i] = p.object_x[i - 1];
+    p.object_y[i] = p.object_y[i - 1];
     p.object_index[i] = p.object_index[i - 1];
   }
-  p.object_x[at] = obj[OBJ_X];
+  p.object_x[at] = x;
+  p.object_y[at] = y;
   p.object_index[at] = index;
   ++p.objects;
 }
@@ -661,19 +682,19 @@ static void fetcher_dot(void) {
 /* Mode 3: objects */
 
 /* where the row of an object that covers this line is in vram[]: LCDC's object size is read each time */
-static unsigned int object_row_address(const uint8_t *obj) {
+static unsigned int object_row_address(void) {
   int rows = TILE_SIZE;
-  uint8_t index = obj[OBJ_TILE];
+  uint8_t index = p.obj_tile;
   if (IO_REG(IO_LCDC) & LCDC_OBJ_TALL) {
     rows = TILE_SIZE * 2;
     index &= OBJ_TALL_TILE_MASK;
   }
-  int row = (p.line - obj[OBJ_Y]) & (rows - 1);
-  if (obj[OBJ_ATTR] & ATTR_FLIP_Y) {
+  int row = (p.line - p.object_y[p.objects - 1]) & (rows - 1);
+  if (p.obj_flags & ATTR_FLIP_Y) {
     row = rows - 1 - row;
   }
   unsigned int address = TILE_DATA_0 - VRAM_START + index * TILE_BYTES + row * TILE_ROW_BYTES;
-  if (cgb_mode && (obj[OBJ_ATTR] & ATTR_BANK)) {
+  if (cgb_mode && (p.obj_flags & ATTR_BANK)) {
     address += VRAM_SIZE;
   }
   return address;
@@ -736,7 +757,6 @@ static int objects_dot(void) {
     return 1;
   }
   for (;;) {
-    const uint8_t *obj;
     switch (p.obj_step) {
       case OBJ_NONE:
         if (!object_due()) {
@@ -765,11 +785,14 @@ static int objects_dot(void) {
         return 1;
       case OBJ_SETTLE:
         fetcher_dot();
+        /* the object's tile and flags are read from OAM here; its Y and X were kept from the scan */
+        p.obj_tile = oam_peek(p.object_index[p.objects - 1] * OBJ_BYTES + OBJ_TILE);
+        p.obj_flags = oam_peek(p.object_index[p.objects - 1] * OBJ_BYTES + OBJ_ATTR);
         p.obj_wait = OBJ_SETTLE_DOTS;
         p.obj_step = OBJ_LOW;
         return 1;
       case OBJ_LOW:
-        p.obj_low_address = object_row_address(&oam[p.object_index[p.objects - 1] * OBJ_BYTES]);
+        p.obj_low_address = object_row_address();
         p.obj_wait = 1;
         p.obj_step = OBJ_LAST;
         return 1;
@@ -779,8 +802,7 @@ static int objects_dot(void) {
         return 1;
       case OBJ_HIGH:
         /* the high bits' address is worked out again, so a change of object size in between splits the row */
-        obj = &oam[p.object_index[p.objects - 1] * OBJ_BYTES];
-        object_overlay(vram[p.obj_low_address], vram[object_row_address(obj) + 1], obj[OBJ_ATTR],
+        object_overlay(vram[p.obj_low_address], vram[object_row_address() + 1], p.obj_flags,
                        p.object_index[p.objects - 1]);
         --p.objects;
         p.obj_step = OBJ_NONE;
