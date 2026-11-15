@@ -791,10 +791,19 @@ void HALT(void) {
   halted = 1; /* until an interrupt is pending (see step) */
 }
 
+enum {
+  /* T-cycles at the normal speed that a speed switch stops the CPU for, the rest of the machine running on: a */
+  /* little over 2^17 at the double speed */
+  SPEED_SWITCH_CYCLES = 0x10004,
+};
+
 void STOP(void) {
-  ++r.PC; /* 10 00: the second byte is skipped, not read */
+  ++r.PC; /* 10 00: the second byte takes an M-cycle, but isn't used */
+  bus_idle();
   bus_sync();
   if (io_speed_switch()) {
+    /* the CPU stands still while the clock settles, for as long at either speed */
+    cpu_paused = (SPEED_SWITCH_CYCLES << double_speed) / M_CYCLE;
     return;
   }
   /* The clock stops, and with it DIV (reset), the PPU and the screen, until a button is pressed (see io_joypad). */

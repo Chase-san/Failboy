@@ -31,6 +31,7 @@ uint8_t halt_bug = 0;     /* PC won't move past the next opcode (see HALT) */
 uint8_t stopped = 0;      /* by STOP, until a button is pressed */
 uint8_t double_speed = 0; /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
 uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
+uint32_t cpu_paused = 0;  /* CGB: M-cycles the CPU has still to sit out after switching speed */
 
 /* T-cycles of the current step the bus has already run */
 static uint32_t bus_cycles = 0;
@@ -220,7 +221,7 @@ static const instruction_f instr_map[256] = {
 /* M-cycles. Conditional branches list the not-taken cost; see cpu_instr.c. */
 static const uint8_t instr_timing[256] = {
     1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1,  // 0x00 to 0x0F
-    1, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1,  // 0x10 to 0x1F
+    2, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1,  // 0x10 to 0x1F
     2, 3, 2, 2, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1,  // 0x20 to 0x2F
     2, 3, 2, 2, 3, 3, 3, 1, 2, 2, 2, 2, 1, 1, 2, 1,  // 0x30 to 0x3F
     1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1,  // 0x40 to 0x4F
@@ -289,8 +290,11 @@ uint32_t step(void) {
     cycle_counter += M_CYCLE;
     return M_CYCLE;
   }
-  if (cpu_locked) {
-    /* the CPU is hung, and the rest of the machine carries on without it */
+  if (cpu_locked || cpu_paused) {
+    /* the CPU is hung, or waiting out a speed switch, and the rest of the machine carries on without it */
+    if (cpu_paused) {
+      --cpu_paused;
+    }
     run_machine(M_CYCLE);
     bus_sync();
     cycle_counter += M_CYCLE;
@@ -362,6 +366,7 @@ int cpu_bios_init(void) {
   r.PC = 0x100;
   r.SP = 0xFFFE;
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
+  cpu_paused = 0;
   cycle_counter = 0;
   bus_cycles = 0;
   video_owed = 0;

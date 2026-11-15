@@ -67,6 +67,7 @@ enum {
   FIRST_LINE_DOT = 5,    /* where the line is as the M-cycle of the write that switched the LCD on ends */
   FIRST_LINE_LATE = 2,   /* dots late that line's drawing is */
   BOOT_DOT = 5,          /* where the boot ROM is taken to leave line 0 */
+  CGB_AHEAD = 2,         /* a CGB's PPU is that much further on than a DMG's, against the CPU's M-cycles */
   SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
   SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands */
   DOCTOR_LY = 0x90,      /* Gameboy Doctor's logs were made with LY stuck here */
@@ -1116,6 +1117,9 @@ void video_stop(void) {
 static void lcd_on(int lead) {
   p.line = 0;
   p.dot = FIRST_LINE_DOT - lead;
+  if (cgb) {
+    p.dot += CGB_AHEAD;
+  }
   p.first_line = 1;
   p.late = FIRST_LINE_LATE;
   p.hblank_dot = NO_DOT;
@@ -1187,6 +1191,9 @@ void video_bios_init(void) {
   IO_REG(IO_LCDC) = LCDC_ENABLE;
   IO_REG(IO_STAT) = MODE_OAM_SCAN;
   p.dot = BOOT_DOT;
+  if (cgb) {
+    p.dot += CGB_AHEAD;
+  }
   p.ly_compare = 0;
   p.oam_read_locked = 1;
   p.oam_write_locked = 1;

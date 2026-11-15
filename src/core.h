@@ -278,6 +278,7 @@ extern uint8_t halt_bug;
 extern uint8_t stopped;
 extern uint8_t double_speed; /* CGB */
 extern uint8_t cpu_locked;
+extern uint32_t cpu_paused; /* CGB: M-cycles left of the wait after a speed switch */
 
 int cpu_bios_init(void); /* everything as the boot ROM leaves it; 0 if the compiler laid F's bits out wrongly */
 uint32_t step(void);     /* runs one instruction (or interrupt/halt cycle), returns T-cycles at the normal speed */
