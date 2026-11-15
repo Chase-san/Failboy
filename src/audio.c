@@ -429,6 +429,11 @@ static void mix(void) {
 
 /* A finished sample: the mix averaged over its T-cycles, through the output capacitor, which takes the DC out. */
 static void emit(void) {
+  if (sample_frames == SAMPLE_BUFFER) {
+    /* nobody's taking them: the sample is dropped, and the channels run on, as the game can still see them */
+    sums[LEFT] = sums[RIGHT] = 0;
+    return;
+  }
   for (int side = 0; side < SIDES; ++side) {
     float in = (float)sums[side] / AUDIO_SAMPLE_CYCLES;
     float out = in - capacitors[side];
@@ -444,10 +449,6 @@ static void emit(void) {
 /* the next. */
 static void catch_up(void) {
   while (pending > 0) {
-    if (sample_frames == SAMPLE_BUFFER) {
-      pending = 0; /* see audio_tick() */
-      return;
-    }
     int run = AUDIO_SAMPLE_CYCLES - sample_clock;
     if (run > pending) {
       run = pending;
@@ -486,10 +487,6 @@ static void catch_up(void) {
 }
 
 void audio_tick(uint32_t cycles) {
-  /* The channels are only heard through the samples, so with nobody taking them (headless) they needn't run. */
-  if (sample_frames == SAMPLE_BUFFER) {
-    return;
-  }
   pending += (int)cycles;
   if (pending >= PENDING_MAX) {
     catch_up();
