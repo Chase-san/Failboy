@@ -781,6 +781,7 @@ void DAA(void) {
 }
 
 void HALT(void) {
+  bus_sync();
   if (!ime && (IO_REG(IO_IF) & io_ie & INT_ALL)) {
     /* The HALT bug: with IME off and an interrupt already pending, the CPU doesn't halt, and fails to move PC past */
     /* the next opcode, so that byte is read twice. */
@@ -792,6 +793,7 @@ void HALT(void) {
 
 void STOP(void) {
   ++r.PC; /* 10 00: the second byte is skipped, not read */
+  bus_sync();
   if (io_speed_switch()) {
     return;
   }

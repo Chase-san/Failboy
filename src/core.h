@@ -281,9 +281,10 @@ int cpu_bios_init(void); /* everything as the boot ROM leaves it; 0 if the compi
 uint32_t step(void);     /* runs one instruction (or interrupt/halt cycle), returns T-cycles at the normal speed */
 
 /* the CPU's memory accesses, each an M-cycle that the rest of the machine runs through; bus_idle() is one of the */
-/* CPU's own, without an access */
+/* CPU's own, without an access. The PPU's share of an M-cycle is held back until the next access, or bus_sync(). */
 uint8_t bus_read(uint16_t);
 void bus_write(uint16_t, uint8_t);
 void bus_idle(void);
+void bus_sync(void); /* catches the PPU up, for looking at what it does (IF, say) without an access */
 
 #endif /* _CORE_H_ */

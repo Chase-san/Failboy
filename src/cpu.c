@@ -35,6 +35,17 @@ uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
 /* T-cycles of the current step the bus has already run */
 static uint32_t bus_cycles = 0;
 
+/* T-cycles the PPU has still to run. It's kept up to an M-cycle behind the rest, and caught up before anything looks */
+/* at it, so that a write to one of its registers can land partway through the M-cycle before, as the real ones do. */
+static uint32_t video_owed = 0;
+
+void bus_sync(void) {
+  if (video_owed) {
+    video_tick(video_owed);
+    video_owed = 0;
+  }
+}
+
 /* Runs the rest of the machine for some of the CPU's T-cycles: the timer and serial at the CPU's speed, the PPU and */
 /* APU at the normal one. */
 static void run_machine(uint32_t cycles) {
@@ -42,7 +53,7 @@ static void run_machine(uint32_t cycles) {
   cycles >>= double_speed;
   audio_tick(cycles);
   if (!doctor) {
-    video_tick(cycles);
+    video_owed += cycles;
   }
 }
 
@@ -50,6 +61,7 @@ static void run_machine(uint32_t cycles) {
 /* One that collides with OAM DMA doesn't get through: a read gets what DMA has on the bus, a write goes nowhere. */
 uint8_t bus_read(uint16_t address) {
   uint8_t value;
+  bus_sync();
   if (io_dma_conflict(address)) {
     value = io_dma_read(address);
   } else {
@@ -61,6 +73,7 @@ uint8_t bus_read(uint16_t address) {
 }
 
 void bus_write(uint16_t address, uint8_t value) {
+  bus_sync();
   if (!io_dma_conflict(address)) {
     mem_write(address, value);
   }
@@ -222,6 +235,7 @@ static void cpu_interrupt(void) {
   bus_idle();
   bus_idle();
   bus_write(--r.SP, r.PC >> 8);
+  bus_sync();
   pending = IO_REG(IO_IF) & io_ie & INT_ALL;
   bus_write(--r.SP, r.PC & 0xFF);
   r.PC = 0x0000;
@@ -246,6 +260,7 @@ uint32_t step(void) {
   if (cpu_locked) {
     /* the CPU is hung, and the rest of the machine carries on without it */
     run_machine(M_CYCLE);
+    bus_sync();
     cycle_counter += M_CYCLE;
     return M_CYCLE >> double_speed;
   }
@@ -275,6 +290,7 @@ uint32_t step(void) {
   if (cycles > bus_cycles) {
     run_machine(cycles - bus_cycles);
   }
+  bus_sync();
   /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
   return cycles >> double_speed;
 }
@@ -314,6 +330,7 @@ int cpu_bios_init(void) {
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
   cycle_counter = 0;
   bus_cycles = 0;
+  video_owed = 0;
 
   io_bios_init();           // DIV
   mem_write(0xFF05, 0x00);  // TIMA
