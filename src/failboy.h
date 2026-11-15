@@ -45,7 +45,7 @@ enum {
 /* failboy.c */
 extern int doctor; /* Gameboy Doctor trace mode */
 
-/* the machine emulated, picked by the cartridge's header unless --gb or --gbc says otherwise */
+/* the machine emulated, picked by the cartridge's header unless --mode says otherwise */
 enum {
   MODEL_DMG,     /* the original Game Boy */
   MODEL_CGB_DMG, /* a Game Boy Color running an original Game Boy game, in its compatibility mode */
@@ -145,11 +145,14 @@ extern uint8_t io_reg[IO_SIZE]; /* FF00-FF7F */
 extern uint8_t io_ie;           /* FFFF */
 #define IO_REG(address) (io_reg[(address) & (IO_SIZE - 1)])
 
+void io_bios_init(void); /* the divider as the boot ROM leaves it */
 void io_request(uint8_t);
 void io_tick(uint32_t);
 void io_joypad(uint8_t);
 int io_serial_result(void);
-int io_speed_switch(void); /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
+int io_speed_switch(void);     /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
+int io_dma_conflict(uint16_t); /* the CPU's access collides with OAM DMA: it's to OAM, or the bus DMA is reading */
+uint8_t io_dma_read(uint16_t); /* what the CPU reads then */
 
 /* video.c */
 enum {
@@ -208,10 +211,7 @@ extern uint8_t *oam;
 extern uint8_t *vram;
 
 uint8_t mem_read(uint16_t);
-uint16_t mem_read16(uint16_t);
-
 void mem_write(uint16_t, uint8_t);
-void mem_write16(uint16_t, uint16_t);
 
 /* cpu.c */
 struct registers {
@@ -287,6 +287,12 @@ extern uint8_t cpu_locked;
 
 void cpu_bios_init(void);
 void cpu_trace(void);
-uint32_t step(void); /* runs one instruction (or interrupt/halt cycle), returns T-cycles */
+uint32_t step(void); /* runs one instruction (or interrupt/halt cycle), returns T-cycles at the normal speed */
+
+/* the CPU's memory accesses, each an M-cycle that the rest of the machine runs through; bus_idle() is one of the */
+/* CPU's own, without an access */
+uint8_t bus_read(uint16_t);
+void bus_write(uint16_t, uint8_t);
+void bus_idle(void);
 
 #endif /* _FAILBOY_H_ */

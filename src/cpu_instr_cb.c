@@ -38,7 +38,7 @@ void SWAP_H(void) { r.H = SWAP(r.H); }
 
 void SWAP_L(void) { r.L = SWAP(r.L); }
 
-void SWAP_aHL(void) { mem_write(r.HL, SWAP(mem_read(r.HL))); }
+void SWAP_aHL(void) { bus_write(r.HL, SWAP(bus_read(r.HL))); }
 
 static force_inline uint8_t RLC_n(register uint8_t n) {
   register uint8_t bit = (n >> 7) & 1;
@@ -63,7 +63,7 @@ void RLC_H(void) { r.H = RLC_n(r.H); }
 
 void RLC_L(void) { r.L = RLC_n(r.L); }
 
-void RLC_aHL(void) { mem_write(r.HL, RLC_n(mem_read(r.HL))); }
+void RLC_aHL(void) { bus_write(r.HL, RLC_n(bus_read(r.HL))); }
 
 static force_inline uint8_t RL_n(register uint8_t n) {
   register uint8_t bit = (n >> 7) & 1;
@@ -88,7 +88,7 @@ void RL_H(void) { r.H = RL_n(r.H); }
 
 void RL_L(void) { r.L = RL_n(r.L); }
 
-void RL_aHL(void) { mem_write(r.HL, RL_n(mem_read(r.HL))); }
+void RL_aHL(void) { bus_write(r.HL, RL_n(bus_read(r.HL))); }
 
 static force_inline uint8_t RRC_n(register uint8_t n) {
   register uint8_t bit = n & 1;
@@ -113,7 +113,7 @@ void RRC_H(void) { r.H = RRC_n(r.H); }
 
 void RRC_L(void) { r.L = RRC_n(r.L); }
 
-void RRC_aHL(void) { mem_write(r.HL, RRC_n(mem_read(r.HL))); }
+void RRC_aHL(void) { bus_write(r.HL, RRC_n(bus_read(r.HL))); }
 
 static force_inline uint8_t RR_n(register uint8_t n) {
   register uint8_t bit = n & 1;
@@ -138,7 +138,7 @@ void RR_H(void) { r.H = RR_n(r.H); }
 
 void RR_L(void) { r.L = RR_n(r.L); }
 
-void RR_aHL(void) { mem_write(r.HL, RR_n(mem_read(r.HL))); }
+void RR_aHL(void) { bus_write(r.HL, RR_n(bus_read(r.HL))); }
 
 static force_inline uint8_t SLA_n(register uint8_t n) {
   register uint8_t bit = (n >> 7) & 1;
@@ -163,7 +163,7 @@ void SLA_H(void) { r.H = SLA_n(r.H); }
 
 void SLA_L(void) { r.L = SLA_n(r.L); }
 
-void SLA_aHL(void) { mem_write(r.HL, SLA_n(mem_read(r.HL))); }
+void SLA_aHL(void) { bus_write(r.HL, SLA_n(bus_read(r.HL))); }
 
 static force_inline uint8_t SRA_n(register uint8_t n) {
   register uint8_t bit = n & 1;
@@ -188,7 +188,7 @@ void SRA_H(void) { r.H = SRA_n(r.H); }
 
 void SRA_L(void) { r.L = SRA_n(r.L); }
 
-void SRA_aHL(void) { mem_write(r.HL, SRA_n(mem_read(r.HL))); }
+void SRA_aHL(void) { bus_write(r.HL, SRA_n(bus_read(r.HL))); }
 
 static force_inline uint8_t SRL_n(register uint8_t n) {
   register uint8_t bit = n & 1;
@@ -213,7 +213,7 @@ void SRL_H(void) { r.H = SRL_n(r.H); }
 
 void SRL_L(void) { r.L = SRL_n(r.L); }
 
-void SRL_aHL(void) { mem_write(r.HL, SRL_n(mem_read(r.HL))); }
+void SRL_aHL(void) { bus_write(r.HL, SRL_n(bus_read(r.HL))); }
 
 static force_inline void BIT_b_r(register uint8_t b, register uint8_t x) {
   r.F_Z = !(x & (1 << b));
@@ -235,7 +235,7 @@ void BIT_b_H(uint8_t b) { BIT_b_r(b, r.H); }
 
 void BIT_b_L(uint8_t b) { BIT_b_r(b, r.L); }
 
-void BIT_b_aHL(uint8_t b) { BIT_b_r(b, mem_read(r.HL)); }
+void BIT_b_aHL(uint8_t b) { BIT_b_r(b, bus_read(r.HL)); }
 
 #define RES_b_r(b, x) x &= ~(1 << b)
 
@@ -253,7 +253,7 @@ void RES_b_H(uint8_t b) { RES_b_r(b, r.H); }
 
 void RES_b_L(uint8_t b) { RES_b_r(b, r.L); }
 
-void RES_b_aHL(uint8_t b) { mem_write(r.HL, mem_read(r.HL) & ~(1 << b)); }
+void RES_b_aHL(uint8_t b) { bus_write(r.HL, bus_read(r.HL) & ~(1 << b)); }
 
 #define SET_b_r(b, x) x |= (1 << b)
 
@@ -271,4 +271,4 @@ void SET_b_H(uint8_t b) { SET_b_r(b, r.H); }
 
 void SET_b_L(uint8_t b) { SET_b_r(b, r.L); }
 
-void SET_b_aHL(uint8_t b) { mem_write(r.HL, mem_read(r.HL) | (1 << b)); }
+void SET_b_aHL(uint8_t b) { bus_write(r.HL, bus_read(r.HL) | (1 << b)); }

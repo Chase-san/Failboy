@@ -171,8 +171,6 @@ uint8_t mem_read(uint16_t address) {
   return readmap[address >> 12](address);
 }
 
-uint16_t mem_read16(uint16_t address) { return (mem_read(address)) | (mem_read(address + 1) << 8); }
-
 /* ************************************************************** */
 /* WRITE */
 void wram_write(uint16_t, uint8_t);  /* C000-DFFF */
@@ -269,9 +267,4 @@ void mem_write(uint16_t address, uint8_t value) {
   /* Use address blocks to avoid if branching. :D */
   /* With just 16 blocks we can massively reduce the branching here. */
   writemap[address >> 12](address, value);
-}
-
-void mem_write16(uint16_t address, uint16_t value) {
-  mem_write(address, value);
-  mem_write(address + 1, value >> 8);
 }

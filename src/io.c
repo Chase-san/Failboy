@@ -36,13 +36,22 @@ enum {
   DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
   DIV_RARE_BITS = DIV_SERIAL_BIT | DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* any of those */
   DIV_AFTER_BOOT = 0xABCC, /* where the DMG's boot ROM leaves the divider */
-  IO_CGB_START = 0xFF4C,   /* FF4C-FF7F: the CGB's registers, with nothing behind them on the DMG */
-  OPEN_BUS = 0xFF,         /* reading nothing: the data bus floats high */
-  KEY1_SWITCH = 0x01,      /* armed for STOP to switch speed */
+  /* A CGB's boot ROM takes as long as the header makes it, so these are two games': an original Game Boy game (in */
+  /* Mooneye's boot_div tests) and a color game (BullyGB's). */
+  DIV_AFTER_COMPAT_BOOT = 0x2678,
+  DIV_AFTER_CGB_BOOT = 0x1E30,
+  IO_CGB_START = 0xFF4C, /* FF4C-FF7F: the CGB's registers, with nothing behind them on the DMG */
+  OPEN_BUS = 0xFF,       /* reading nothing: the data bus floats high */
+  KEY1_SWITCH = 0x01,    /* armed for STOP to switch speed */
   KEY1_DOUBLE = 0x80,
   KEY1_UNUSED = 0x7E,
   SVBK_BANK = 0x07,
   SVBK_UNUSED = 0xF8,
+  IO_FF72 = 0xFF72, /* CGB: FF72-FF75 just hold what's written, to no known end: FF74 for a color game, FF75 bits 4-6 */
+  IO_FF73 = 0xFF73,
+  IO_FF74 = 0xFF74,
+  IO_FF75 = 0xFF75,
+  FF75_UNUSED = 0x8F,
 };
 
 /* FF00-FF0F: the bits that read back as 1, being unused, or in registers with nothing behind them */
@@ -62,6 +71,30 @@ static const uint8_t tac_bit[4] = {9, 3, 5, 7};
 /* bits left to shift in the current serial transfer */
 static uint8_t serial_bits = 0;
 
+/* OAM DMA copies a byte each M-cycle over a bus it shares with the CPU. While it does, the CPU can't get at OAM, or */
+/* at anything on that bus, where it reads DMA's byte instead; its writes to either go nowhere. A write to DMA */
+/* (re)starts it after a short delay, the old transfer carrying on until then. */
+enum {
+  DMA_IDLE = OAM_SIZE,  /* dma_next with no transfer going */
+  DMA_START_CYCLES = 2, /* M-cycles from the write until OAM is taken; the first byte comes the M-cycle after */
+  OAM_BUSY = 0xFF,      /* what the CPU reads from OAM meanwhile */
+};
+
+/* the buses, as far as OAM DMA is concerned */
+enum {
+  BUS_EXTERNAL, /* the cartridge and work RAM; just the cartridge on a CGB, which gives work RAM its own */
+  BUS_WRAM,     /* CGB */
+  BUS_VRAM,
+  BUS_OAM,
+  BUS_INTERNAL, /* the registers and HRAM, which DMA never gets in the way of */
+};
+
+static uint16_t dma_source = 0;
+static int dma_bus = BUS_EXTERNAL; /* the one dma_source is on */
+static int dma_next = DMA_IDLE;
+static uint16_t dma_restart = 0; /* the source written, starting when dma_starting runs out */
+static int dma_starting = 0;
+
 /* The last few characters sent over serial, to spot Blargg's "Passed"/"Failed". */
 static char serial_tail[6];
 static int serial_result = SERIAL_NONE;
@@ -70,6 +103,15 @@ static int serial_result = SERIAL_NONE;
 static uint8_t joypad = 0;
 
 void io_request(uint8_t mask) { IO_REG(IO_IF) |= mask; }
+
+void io_bios_init(void) {
+  div_counter = DIV_AFTER_BOOT;
+  if (model == MODEL_CGB_DMG) {
+    div_counter = DIV_AFTER_COMPAT_BOOT;
+  } else if (model == MODEL_CGB) {
+    div_counter = DIV_AFTER_CGB_BOOT;
+  }
+}
 
 void io_joypad(uint8_t pressed) {
   /* a press pulls an input line low, which is what requests the interrupt, and ends STOP */
@@ -166,9 +208,56 @@ int io_speed_switch(void) {
   return 1;
 }
 
+static int bus_of(uint16_t address) {
+  if (address >= IO_P1) {
+    return BUS_INTERNAL;
+  }
+  if (address >= OAM_START) {
+    return BUS_OAM;
+  }
+  if (address >= VRAM_START && address < VRAM_START + VRAM_SIZE) {
+    return BUS_VRAM;
+  }
+  if (address >= WRAM_START && model != MODEL_DMG) {
+    return BUS_WRAM;
+  }
+  return BUS_EXTERNAL;
+}
+
+int io_dma_conflict(uint16_t address) {
+  int bus;
+  if (dma_next == DMA_IDLE) {
+    return 0;
+  }
+  bus = bus_of(address);
+  return bus == BUS_OAM || bus == dma_bus;
+}
+
+uint8_t io_dma_read(uint16_t address) {
+  if (bus_of(address) == BUS_OAM) {
+    return OAM_BUSY;
+  }
+  /* the byte DMA reads this M-cycle */
+  return mem_read(dma_source + dma_next);
+}
+
+static void dma_cycle(void) {
+  if (dma_next < DMA_IDLE) {
+    oam[dma_next] = mem_read(dma_source + dma_next);
+    ++dma_next;
+  }
+  /* a (re)start takes over at the end of the M-cycle, and copies from the next */
+  if (dma_starting && --dma_starting == 0) {
+    dma_source = dma_restart;
+    dma_bus = bus_of(dma_source);
+    dma_next = 0;
+  }
+}
+
 void io_tick(uint32_t cycles) {
   for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
     div_set(div_counter + M_CYCLE);
+    dma_cycle();
   }
 }
 
@@ -222,6 +311,22 @@ uint8_t io_read(uint16_t address) {
         return OPEN_BUS;
       }
       return SVBK_UNUSED | IO_REG(IO_SVBK);
+    case IO_FF72:
+    case IO_FF73:
+      if (model == MODEL_DMG) {
+        return OPEN_BUS;
+      }
+      return IO_REG(address);
+    case IO_FF74:
+      if (model != MODEL_CGB) {
+        return OPEN_BUS;
+      }
+      return IO_REG(IO_FF74);
+    case IO_FF75:
+      if (model == MODEL_DMG) {
+        return OPEN_BUS;
+      }
+      return FF75_UNUSED | IO_REG(IO_FF75);
     case IO_IE:
       return io_ie;
     default:
@@ -264,15 +369,14 @@ void io_write(uint16_t address, uint8_t value) {
       IO_REG(IO_IF) = value & INT_ALL;
       break;
     case IO_DMA:
-      /* OAM DMA, done all at once; from E000 up it reads work RAM, as echo RAM does */
+      /* from E000 up it reads work RAM, as echo RAM does */
       IO_REG(IO_DMA) = value;
       source = value << 8;
       if (source >= ECHO_START) {
         source -= ECHO_START - WRAM_START;
       }
-      for (uint16_t i = 0; i < OAM_SIZE; ++i) {
-        oam[i] = mem_read(source + i);
-      }
+      dma_restart = source;
+      dma_starting = DMA_START_CYCLES;
       break;
     case IO_KEY1:
       IO_REG(IO_KEY1) = value & KEY1_SWITCH;

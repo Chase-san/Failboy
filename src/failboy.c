@@ -58,6 +58,20 @@ enum {
 static const char SAVE_EXTENSION[] = ".sav";
 static const char RTC_EXTENSION[] = ".rtc";
 
+/* --mode: the machine to run as, or what the cartridge's header asks for */
+enum {
+  MODE_AUTO = -1,
+  MODE_SGB = -2, /* not supported yet */
+  MODE_UNKNOWN = -3,
+};
+
+static const struct {
+  const char *name;
+  int mode;
+} modes[] = {
+    {"auto", MODE_AUTO}, {"dmg", MODEL_DMG}, {"gbc", MODEL_CGB}, {"gbcfb", MODEL_CGB_DMG}, {"sgb", MODE_SGB},
+};
+
 int doctor = 0;
 int model = MODEL_DMG;
 
@@ -84,9 +98,10 @@ static int usage(const char *name) {
   fprintf(stderr, "  --rslcd      start with the really shitty LCD (L toggles it)\n");
   fprintf(stderr, "  --headless   run without a window (implied by the options below)\n");
 #endif
-  fprintf(stderr, "  --gb         run as an original Game Boy, even a color game\n");
-  fprintf(stderr, "  --gbc        run as a Game Boy Color, even an original Game Boy game\n");
-  fprintf(stderr, "               (without either, as whatever the game's header says it's for)\n");
+  fprintf(stderr, "  --mode MODE  what to run as: auto (the default: what the game's header asks for), dmg (an\n");
+  fprintf(stderr,
+          "               original Game Boy), gbc (a Game Boy Color), gbcfb (a Game Boy Color in its fallback\n");
+  fprintf(stderr, "               mode for original Game Boy games) or sgb (not supported yet)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
   fprintf(stderr, "  --dump FILE  save the last frame as a PGM image (a PPM for a Game Boy Color)\n");
@@ -97,6 +112,15 @@ static int usage(const char *name) {
   fprintf(stderr, "exit status: %d passed, %d failed, %d error, %d no result\n", EXIT_PASSED, EXIT_FAILED, EXIT_ERROR,
           EXIT_NO_RESULT);
   return EXIT_ERROR;
+}
+
+static int find_mode(const char *name) {
+  for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+    if (strcmp(name, modes[i].name) == 0) {
+      return modes[i].mode;
+    }
+  }
+  return MODE_UNKNOWN;
 }
 
 static int dump_frame(const char *filename) {
@@ -230,8 +254,7 @@ int main(int argc, char *argv[]) {
   unsigned long frames = 0;
   int headless = 1;
   int rslcd = 0;
-  int gb = 0;
-  int gbc = 0;
+  int mode = MODE_AUTO;
 #ifdef FAILBOY_SDL
   headless = 0;
 #endif
@@ -244,12 +267,15 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[i], "--rslcd") == 0) {
       rslcd = 1;
 #endif
-    } else if (strcmp(argv[i], "--gb") == 0) {
-      gb = 1;
-      gbc = 0;
-    } else if (strcmp(argv[i], "--gbc") == 0) {
-      gbc = 1;
-      gb = 0;
+    } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
+      mode = find_mode(argv[++i]);
+      if (mode == MODE_UNKNOWN) {
+        return usage(argv[0]);
+      }
+      if (mode == MODE_SGB) {
+        fprintf(stderr, "failboy: sgb mode isn't supported yet\n");
+        return EXIT_ERROR;
+      }
     } else if (strcmp(argv[i], "--doctor") == 0) {
       doctor = 1;
       headless = 1;
@@ -284,13 +310,21 @@ int main(int argc, char *argv[]) {
     return EXIT_ERROR;
   }
   /* Gameboy Doctor's logs start from the DMG's registers */
-  if (doctor && !gbc) {
-    gb = 1;
+  if (doctor && mode == MODE_AUTO) {
+    mode = MODEL_DMG;
   }
-  if (cart_cgb() && !gb) {
-    model = MODEL_CGB;
-  } else if (gbc) {
-    model = MODEL_CGB_DMG;
+  model = mode;
+  if (mode == MODE_AUTO) {
+    model = MODEL_DMG;
+    if (cart_cgb()) {
+      model = MODEL_CGB;
+    }
+  }
+  if (model == MODEL_CGB && !cart_cgb()) {
+    fprintf(stderr,
+            "failboy: '%s' isn't a Game Boy Color game, so it has no colors to show (gbcfb runs it as a GBC "
+            "would)\n",
+            filename);
   }
   if (!mem_alloc()) {
     fprintf(stderr, "failboy: out of memory\n");

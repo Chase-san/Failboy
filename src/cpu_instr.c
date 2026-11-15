@@ -20,7 +20,7 @@
 /* **************************************** */
 /* Operand fetch */
 /* Functions rather than macros, so the byte order of rpc16 is well defined. */
-static force_inline uint8_t rpc8(void) { return mem_read(r.PC++); }
+static force_inline uint8_t rpc8(void) { return bus_read(r.PC++); }
 
 static force_inline uint16_t rpc16(void) {
   register uint16_t lo = rpc8();
@@ -47,7 +47,7 @@ void LD_H_n(void) { r.H = rpc8(); }
 
 void LD_L_n(void) { r.L = rpc8(); }
 
-void LD_aHL_n(void) { mem_write(r.HL, rpc8()); }
+void LD_aHL_n(void) { bus_write(r.HL, rpc8()); }
 
 void LD_A_A(void) { r.A = r.A; }
 
@@ -63,17 +63,17 @@ void LD_A_H(void) { r.A = r.H; }
 
 void LD_A_L(void) { r.A = r.L; }
 
-void LD_A_aHL(void) { r.A = mem_read(r.HL); }
+void LD_A_aHL(void) { r.A = bus_read(r.HL); }
 
-void LD_A_aC(void) { r.A = mem_read(r.C + 0xFF00); }
+void LD_A_aC(void) { r.A = bus_read(r.C + 0xFF00); }
 
-void LD_aC_A(void) { mem_write(r.C + 0xFF00, r.A); }
+void LD_aC_A(void) { bus_write(r.C + 0xFF00, r.A); }
 
-void LD_A_aBC(void) { r.A = mem_read(r.BC); }
+void LD_A_aBC(void) { r.A = bus_read(r.BC); }
 
-void LD_A_aDE(void) { r.A = mem_read(r.DE); }
+void LD_A_aDE(void) { r.A = bus_read(r.DE); }
 
-void LD_A_ann(void) { r.A = mem_read(rpc16()); }
+void LD_A_ann(void) { r.A = bus_read(rpc16()); }
 
 void LD_B_A(void) { r.B = r.A; }
 
@@ -89,7 +89,7 @@ void LD_B_H(void) { r.B = r.H; }
 
 void LD_B_L(void) { r.B = r.L; }
 
-void LD_B_aHL(void) { r.B = mem_read(r.HL); }
+void LD_B_aHL(void) { r.B = bus_read(r.HL); }
 
 void LD_C_A(void) { r.C = r.A; }
 
@@ -105,7 +105,7 @@ void LD_C_H(void) { r.C = r.H; }
 
 void LD_C_L(void) { r.C = r.L; }
 
-void LD_C_aHL(void) { r.C = mem_read(r.HL); }
+void LD_C_aHL(void) { r.C = bus_read(r.HL); }
 
 void LD_D_A(void) { r.D = r.A; }
 
@@ -121,7 +121,7 @@ void LD_D_H(void) { r.D = r.H; }
 
 void LD_D_L(void) { r.D = r.L; }
 
-void LD_D_aHL(void) { r.D = mem_read(r.HL); }
+void LD_D_aHL(void) { r.D = bus_read(r.HL); }
 
 void LD_E_A(void) { r.E = r.A; }
 
@@ -137,7 +137,7 @@ void LD_E_H(void) { r.E = r.H; }
 
 void LD_E_L(void) { r.E = r.L; }
 
-void LD_E_aHL(void) { r.E = mem_read(r.HL); }
+void LD_E_aHL(void) { r.E = bus_read(r.HL); }
 
 void LD_H_A(void) { r.H = r.A; }
 
@@ -153,7 +153,7 @@ void LD_H_H(void) { r.H = r.H; }
 
 void LD_H_L(void) { r.H = r.L; }
 
-void LD_H_aHL(void) { r.H = mem_read(r.HL); }
+void LD_H_aHL(void) { r.H = bus_read(r.HL); }
 
 void LD_L_A(void) { r.L = r.A; }
 
@@ -169,39 +169,39 @@ void LD_L_H(void) { r.L = r.H; }
 
 void LD_L_L(void) { r.L = r.L; }
 
-void LD_L_aHL(void) { r.L = mem_read(r.HL); }
+void LD_L_aHL(void) { r.L = bus_read(r.HL); }
 
-void LD_aHL_A(void) { mem_write(r.HL, r.A); }
+void LD_aHL_A(void) { bus_write(r.HL, r.A); }
 
-void LD_aHL_B(void) { mem_write(r.HL, r.B); }
+void LD_aHL_B(void) { bus_write(r.HL, r.B); }
 
-void LD_aHL_C(void) { mem_write(r.HL, r.C); }
+void LD_aHL_C(void) { bus_write(r.HL, r.C); }
 
-void LD_aHL_D(void) { mem_write(r.HL, r.D); }
+void LD_aHL_D(void) { bus_write(r.HL, r.D); }
 
-void LD_aHL_E(void) { mem_write(r.HL, r.E); }
+void LD_aHL_E(void) { bus_write(r.HL, r.E); }
 
-void LD_aHL_H(void) { mem_write(r.HL, r.H); }
+void LD_aHL_H(void) { bus_write(r.HL, r.H); }
 
-void LD_aHL_L(void) { mem_write(r.HL, r.L); }
+void LD_aHL_L(void) { bus_write(r.HL, r.L); }
 
-void LD_aBC_A(void) { mem_write(r.BC, r.A); }
+void LD_aBC_A(void) { bus_write(r.BC, r.A); }
 
-void LD_aDE_A(void) { mem_write(r.DE, r.A); }
+void LD_aDE_A(void) { bus_write(r.DE, r.A); }
 
-void LD_ann_A(void) { mem_write(rpc16(), r.A); }
+void LD_ann_A(void) { bus_write(rpc16(), r.A); }
 
-void LDD_A_aHL(void) { r.A = mem_read(r.HL--); }
+void LDD_A_aHL(void) { r.A = bus_read(r.HL--); }
 
-void LDD_aHL_A(void) { mem_write(r.HL--, r.A); }
+void LDD_aHL_A(void) { bus_write(r.HL--, r.A); }
 
-void LDI_A_aHL(void) { r.A = mem_read(r.HL++); }
+void LDI_A_aHL(void) { r.A = bus_read(r.HL++); }
 
-void LDI_aHL_A(void) { mem_write(r.HL++, r.A); }
+void LDI_aHL_A(void) { bus_write(r.HL++, r.A); }
 
-void LDH_A_an(void) { r.A = mem_read(0xFF00 + rpc8()); }
+void LDH_A_an(void) { r.A = bus_read(0xFF00 + rpc8()); }
 
-void LDH_an_A(void) { mem_write(0xFF00 + rpc8(), r.A); }
+void LDH_an_A(void) { bus_write(0xFF00 + rpc8(), r.A); }
 
 /* **************************************** */
 /* 16-bit loads */
@@ -224,11 +224,17 @@ void LDHL_SP_n(void) {
   r.HL = (uint16_t)(r.SP + n);
 }
 
-void LD_ann_SP(void) { mem_write16(rpc16(), r.SP); }
+void LD_ann_SP(void) {
+  uint16_t address = rpc16();
+  bus_write(address, r.SP & 0xFF);
+  bus_write(address + 1, r.SP >> 8);
+}
 
+/* an M-cycle of its own first, then the high byte, then the low */
 static force_inline void PUSH16(uint16_t n) {
-  r.SP -= 2;
-  mem_write16(r.SP, n);
+  bus_idle();
+  bus_write(--r.SP, n >> 8);
+  bus_write(--r.SP, n & 0xFF);
 }
 
 void PUSH_AF(void) { PUSH16(r.AF); }
@@ -240,9 +246,8 @@ void PUSH_DE(void) { PUSH16(r.DE); }
 void PUSH_HL(void) { PUSH16(r.HL); }
 
 static force_inline uint16_t POP16(void) {
-  uint16_t ret = mem_read16(r.SP);
-  r.SP += 2;
-  return ret;
+  uint16_t lo = bus_read(r.SP++);
+  return lo | bus_read(r.SP++) << 8;
 }
 
 /* Lower bits of F are never ever set. */
@@ -280,7 +285,7 @@ void ADD_A_H(void) { ADD(r.H); }
 
 void ADD_A_L(void) { ADD(r.L); }
 
-void ADD_A_aHL(void) { ADD(mem_read(r.HL)); }
+void ADD_A_aHL(void) { ADD(bus_read(r.HL)); }
 
 void ADD_A_n(void) { ADD(rpc8()); }
 
@@ -309,7 +314,7 @@ void ADC_A_H(void) { ADC(r.H); }
 
 void ADC_A_L(void) { ADC(r.L); }
 
-void ADC_A_aHL(void) { ADC(mem_read(r.HL)); }
+void ADC_A_aHL(void) { ADC(bus_read(r.HL)); }
 
 void ADC_A_n(void) { ADC(rpc8()); }
 
@@ -336,7 +341,7 @@ void SUB_H(void) { SUB(r.H); }
 
 void SUB_L(void) { SUB(r.L); }
 
-void SUB_aHL(void) { SUB(mem_read(r.HL)); }
+void SUB_aHL(void) { SUB(bus_read(r.HL)); }
 
 void SUB_n(void) { SUB(rpc8()); }
 
@@ -365,7 +370,7 @@ void SBC_A_H(void) { SBC(r.H); }
 
 void SBC_A_L(void) { SBC(r.L); }
 
-void SBC_A_aHL(void) { SBC(mem_read(r.HL)); }
+void SBC_A_aHL(void) { SBC(bus_read(r.HL)); }
 
 void SBC_A_n(void) { SBC(rpc8()); }
 
@@ -390,7 +395,7 @@ void AND_H(void) { AND(r.H); }
 
 void AND_L(void) { AND(r.L); }
 
-void AND_aHL(void) { AND(mem_read(r.HL)); }
+void AND_aHL(void) { AND(bus_read(r.HL)); }
 
 void AND_n(void) { AND(rpc8()); }
 
@@ -414,7 +419,7 @@ void OR_H(void) { OR(r.H); }
 
 void OR_L(void) { OR(r.L); }
 
-void OR_aHL(void) { OR(mem_read(r.HL)); }
+void OR_aHL(void) { OR(bus_read(r.HL)); }
 
 void OR_n(void) { OR(rpc8()); }
 
@@ -438,7 +443,7 @@ void XOR_H(void) { XOR(r.H); }
 
 void XOR_L(void) { XOR(r.L); }
 
-void XOR_aHL(void) { XOR(mem_read(r.HL)); }
+void XOR_aHL(void) { XOR(bus_read(r.HL)); }
 
 void XOR_n(void) { XOR(rpc8()); }
 
@@ -464,7 +469,7 @@ void CP_H(void) { CP(r.H); }
 
 void CP_L(void) { CP(r.L); }
 
-void CP_aHL(void) { CP(mem_read(r.HL)); }
+void CP_aHL(void) { CP(bus_read(r.HL)); }
 
 void CP_n(void) { CP(rpc8()); }
 
@@ -489,8 +494,8 @@ void INC_H(void) { INC(++r.H); }
 void INC_L(void) { INC(++r.L); }
 
 void INC_aHL(void) {
-  register uint8_t tmp = mem_read(r.HL) + 1;
-  mem_write(r.HL, tmp);
+  register uint8_t tmp = bus_read(r.HL) + 1;
+  bus_write(r.HL, tmp);
   INC(tmp);
 }
 
@@ -515,8 +520,8 @@ void DEC_H(void) { DEC(--r.H); }
 void DEC_L(void) { DEC(--r.L); }
 
 void DEC_aHL(void) {
-  register uint8_t tmp = mem_read(r.HL) - 1;
-  mem_write(r.HL, tmp);
+  register uint8_t tmp = bus_read(r.HL) - 1;
+  bus_write(r.HL, tmp);
   DEC(tmp);
 }
 
@@ -786,7 +791,7 @@ void HALT(void) {
 }
 
 void STOP(void) {
-  rpc8(); /* 10 00: the second byte is skipped */
+  ++r.PC; /* 10 00: the second byte is skipped, not read */
   if (io_speed_switch()) {
     return;
   }
@@ -809,7 +814,9 @@ void EI(void) {
 /* Return */
 void RET(void) { r.PC = POP16(); }
 
+/* A conditional return spends an M-cycle on the condition before it pops. */
 void RET_NZ(void) {
+  bus_idle();
   if (!r.F_Z) {
     RET();
     cycle_counter += 3 << M_CYCLE_SHL;
@@ -817,6 +824,7 @@ void RET_NZ(void) {
 }
 
 void RET_Z(void) {
+  bus_idle();
   if (r.F_Z) {
     RET();
     cycle_counter += 3 << M_CYCLE_SHL;
@@ -824,6 +832,7 @@ void RET_Z(void) {
 }
 
 void RET_NC(void) {
+  bus_idle();
   if (!r.F_C) {
     RET();
     cycle_counter += 3 << M_CYCLE_SHL;
@@ -831,6 +840,7 @@ void RET_NC(void) {
 }
 
 void RET_C(void) {
+  bus_idle();
   if (r.F_C) {
     RET();
     cycle_counter += 3 << M_CYCLE_SHL;

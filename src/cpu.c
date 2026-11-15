@@ -35,6 +35,48 @@ uint8_t stopped = 0;      /* by STOP, until a button is pressed */
 uint8_t double_speed = 0; /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
 uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
 
+/* T-cycles of the current step the bus has already run */
+static uint32_t bus_cycles = 0;
+
+/* Runs the rest of the machine for some of the CPU's T-cycles: the timer and serial at the CPU's speed, the PPU and */
+/* APU at the normal one. */
+static void run_machine(uint32_t cycles) {
+  io_tick(cycles);
+  cycles >>= double_speed;
+  audio_tick(cycles);
+  if (!doctor) {
+    video_tick(cycles);
+  }
+}
+
+/* Each of the CPU's reads and writes takes an M-cycle, which the rest of the machine runs through after the access. */
+/* One that collides with OAM DMA doesn't get through: a read gets what DMA has on the bus, a write goes nowhere. */
+uint8_t bus_read(uint16_t address) {
+  uint8_t value;
+  if (io_dma_conflict(address)) {
+    value = io_dma_read(address);
+  } else {
+    value = mem_read(address);
+  }
+  run_machine(M_CYCLE);
+  bus_cycles += M_CYCLE;
+  return value;
+}
+
+void bus_write(uint16_t address, uint8_t value) {
+  if (!io_dma_conflict(address)) {
+    mem_write(address, value);
+  }
+  run_machine(M_CYCLE);
+  bus_cycles += M_CYCLE;
+}
+
+/* an M-cycle the CPU spends on its own, before an access that has to wait for it */
+void bus_idle(void) {
+  run_machine(M_CYCLE);
+  bus_cycles += M_CYCLE;
+}
+
 void NOP(void) {}
 
 void XXX(void) {
@@ -181,11 +223,13 @@ static void cpu_interrupt(void) {
     halt_bug = 0;
     --r.PC;
   }
-  /* PC's high byte is pushed first, and can land on IE (with SP at 0000); only then is the interrupt picked, so it */
-  /* can be another one, or none at all, which leaves PC at 0000. */
-  mem_write(--r.SP, r.PC >> 8);
+  /* Two M-cycles of waiting, then PC's high byte is pushed, and can land on IE (with SP at 0000); only then is the */
+  /* interrupt picked, so it can be another one, or none at all, which leaves PC at 0000. */
+  bus_idle();
+  bus_idle();
+  bus_write(--r.SP, r.PC >> 8);
   pending = IO_REG(IO_IF) & io_ie & INT_ALL;
-  mem_write(--r.SP, r.PC & 0xFF);
+  bus_write(--r.SP, r.PC & 0xFF);
   r.PC = 0x0000;
   if (pending) {
     /* the lowest set bit wins */
@@ -206,6 +250,7 @@ uint32_t step(void) {
     return M_CYCLE;
   }
   uint64_t start = cycle_counter;
+  bus_cycles = 0;
   cpu_interrupt();
   if (halted) {
     cycle_counter += M_CYCLE;
@@ -227,15 +272,13 @@ uint32_t step(void) {
     }
   }
 
+  /* The bus ran the accesses; what's left is the M-cycles the CPU spent on its own at the end (or all of HALT's). */
   uint32_t cycles = (uint32_t)(cycle_counter - start);
-  io_tick(cycles);
-  /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
-  cycles >>= double_speed;
-  audio_tick(cycles);
-  if (!doctor) {
-    video_tick(cycles);
+  if (cycles > bus_cycles) {
+    run_machine(cycles - bus_cycles);
   }
-  return cycles;
+  /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
+  return cycles >> double_speed;
 }
 
 /* One line per instruction, in Gameboy Doctor's log format. */
@@ -280,6 +323,7 @@ void cpu_bios_init(void) {
   r.SP = 0xFFFE;
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
 
+  io_bios_init();           // DIV
   mem_write(0xFF05, 0x00);  // TIMA
   mem_write(0xFF06, 0x00);  // TMA
   mem_write(0xFF07, 0x00);  // TAC
