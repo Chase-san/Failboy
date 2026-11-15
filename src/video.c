@@ -1375,6 +1375,11 @@ uint32_t video_write_lead(uint16_t address) {
 }
 
 void video_write(uint16_t address, uint8_t value) {
+  if (doctor) {
+    /* the PPU isn't run, so there's no second half to come */
+    register_set(address, value, 0);
+    return;
+  }
   if (p.latch_dots) {
     /* writes can't really come this close together: finish the last */
     p.latch_dots = 0;
