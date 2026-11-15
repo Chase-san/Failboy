@@ -1433,8 +1433,11 @@ void video_write(uint16_t address, uint8_t value) {
   }
   uint8_t old = IO_REG(address);
   uint8_t first = old | value;
+  int lead = SPLIT_WRITE_LEAD;
   if (cgb && address == IO_LCDC && (old & ~value & LCDC_TILE_DATA)) {
+    /* CGB: the rest of LCDC changes now, at the end of the M-cycle, and the tile data bit a dot after */
     first = value | LCDC_TILE_DATA;
+    lead = 0;
     p.tile_glitch = 1;
   } else if (!write_is_split(address)) {
     register_set(address, value, 0);
@@ -1450,7 +1453,7 @@ void video_write(uint16_t address, uint8_t value) {
       p.obj_wait = 0;
     }
   }
-  register_set(address, first, SPLIT_WRITE_LEAD);
+  register_set(address, first, lead);
   p.latch_address = address;
   p.latch_value = value;
   p.latch_dots = SPLIT_WRITE_LEAD;
