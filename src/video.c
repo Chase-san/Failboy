@@ -27,10 +27,10 @@
 /* places below. Nobody here can measure either, so each is held to other people's tests of it, and where those */
 /* disagree about one revision, the reading that passes more of them is the one kept: */
 /* - A CGB C to Gambatte's hwtests (taken to be from a CGB-CPU-04), AGE's tests named for B and C, and mealybug's */
-/*   CGB-C pictures: 2420 of Gambatte's 3023 CGB results, 22 of AGE's 37, 7 of mealybug's 27 (2026-11-16). */
+/*   CGB-C pictures: 2631 of Gambatte's 3023 CGB results, 22 of AGE's 37, 7 of mealybug's 27 (2026-11-16). */
 /* - A CGB E to DocBoy's test suite (whose CGB matches mealybug's CGB-D pictures wherever those differ from the */
 /*   CGB-C ones, and whose author writes of a real CGB-E), AGE's tests named for E, and mealybug's CGB-D pictures, D */
-/*   and E being taken as one: 1742 of the 2130 DocBoy tests that aren't of sound and 314 of 607 with a DMG game */
+/*   and E being taken as one: 1838 of the 2130 DocBoy tests that aren't of sound and 329 of 607 with a DMG game */
 /*   in, 22 of AGE's 37, 6 of mealybug's 20. That DocBoy's results are from that hardware is its author's word, */
 /*   in one comment; its README doesn't say. */
 /* A test of one revision is applied to the other too, unless the other's own tests say otherwise. What every CGB */
@@ -73,12 +73,14 @@
 /*   picture from a DMG-CPU B. */
 /* - The window at WX 166 only moves its line counter (DMG); the real one's is said to start during HBlank. WY is */
 /*   compared twice a line (as the pixels start, and near the line's end), where the hardware may do it more often. */
-/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1382 of 1651, and 10 of 14): some of the */
+/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1491 of 1651, and 10 of 14): some of the */
 /*   window's and mode 1's cases, AGE's m3-bg-scx picture and a 2-pixel difference in its m3-bg-bgp, and its */
 /*   stat-mode-sprites and oam-write. */
 /* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
 /*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and at double speed which */
-/*   half of the M-cycle it is, is a guess. Gambatte's oamdma results mostly fail, on either machine. */
+/*   half of the M-cycle it is, is a guess. Gambatte's late_sp results, of an object changed by DMA as the scan */
+/*   reaches it, fail on either machine (8 on a DMG, 15 on a CGB C). What the CPU and DMA do to each other on a */
+/*   shared bus is io.c's, and passes most of Gambatte's oamdma results. */
 /* - VRAM DMA stops the CPU between two instructions and copies a byte every 2 dots (bus_dma, cpu.c), an HBlank */
 /*   copy's block asked for a dot after the HBlank interrupt; that much DocBoy's timing tests and Gambatte's dma */
 /*   results agree on. A copy that runs into the drawing gets a byte in where the PPU isn't reading VRAM itself */
