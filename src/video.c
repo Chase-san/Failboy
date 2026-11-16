@@ -1368,6 +1368,11 @@ uint8_t video_read(uint16_t address) {
       if (doctor) {
         return DOCTOR_LY;
       }
+      /* Read on the very dot it changes, LY is the old line and the new, ANDed. A CPU only gets there once a speed */
+      /* switch has put its M-cycles out of step with the lines. */
+      if ((IO_REG(IO_LCDC) & LCDC_ENABLE) && p.dot == DOT_LINE && !p.first_line) {
+        return IO_REG(IO_LY) & p.line;
+      }
       return IO_REG(IO_LY);
     case IO_VBK:
       return VBK_UNUSED | p.vram_bank;
