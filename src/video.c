@@ -82,9 +82,10 @@
 /* - VRAM DMA stops the CPU between two instructions and copies a byte every 2 dots (bus_dma, cpu.c), an HBlank */
 /*   copy's block asked for a dot after the HBlank interrupt; that much DocBoy's timing tests and Gambatte's dma */
 /*   results agree on. What isn't done: a copy that runs into the drawing loses every byte, where the hardware lets */
-/*   one in four through between the fetcher's reads (83 DocBoy tests); the source being VRAM, OAM, I/O or echo RAM, */
-/*   or the destination running off the end of VRAM, are plain reads and a wrap; OAM DMA running at the same time */
-/*   isn't allowed for; and a halted CPU's copy just waits for it to wake. */
+/*   one in four through between the fetcher's reads (83 DocBoy tests); OAM DMA running at the same time isn't */
+/*   allowed for (31); the first byte of a copy that can't read its source is the next opcode, which isn't right */
+/*   when the code is running from RAM; and a block that comes due while the CPU is halted waits for it to wake */
+/*   and goes after the instruction that follows, which the tests are split on. */
 /* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
 /* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
 /*   at once. */
@@ -227,7 +228,6 @@ enum {
   HDMA_HBLANK = 0x80,   /* HDMA5 written: a block each HBlank; read: no copy going */
   HDMA_IDLE = 0xFF,     /* HDMA5 read with no copy started, or once it's done */
   HDMA_SOURCE = 0xFFF0, /* the low 4 bits of the source and destination are ignored */
-  HDMA_DEST = 0x1FF0,   /* the destination's an offset into VRAM */
   BYTE_BITS = 8,
   BYTE_MASK = 0xFF,
 };
@@ -327,9 +327,11 @@ struct ppu {
   uint8_t bg_palettes[PALETTE_RAM_SIZE];
   uint8_t obj_palettes[PALETTE_RAM_SIZE];
   uint16_t hdma_source;
-  uint16_t hdma_dest;  /* offset into VRAM */
+  uint16_t hdma_dest;  /* as written: its low 13 bits are the offset into VRAM */
   uint8_t hdma_blocks; /* left to copy, a block each HBlank */
   uint16_t hdma_run;   /* bytes the CPU is to be stopped for now */
+  uint8_t hdma_first;  /* it has just taken the bus */
+  uint8_t hdma_bus;    /* and found this on it */
   uint8_t hdma_status;
 
   /* where it's got to */
@@ -508,21 +510,49 @@ static uint16_t mix(uint8_t bg_color, uint8_t bg_attr, uint8_t obj_color, uint8_
 
 int video_dma_pending(void) { return p.hdma_run != 0; }
 
+/* What the copy reads. It can't read VRAM while it writes it, nor anything from E000 up, and gets FF; but for the */
+/* first byte after it takes the bus, which is what the CPU had there: the opcode it was about to run. */
+static uint8_t hdma_read(void) {
+  uint16_t source = p.hdma_source;
+  if ((source >= VRAM_START && source < VRAM_START + VRAM_SIZE) || source >= ECHO_START) {
+    if (p.hdma_first) {
+      return p.hdma_bus;
+    }
+    return BYTE_MASK;
+  }
+  return mem_read(source);
+}
+
+/* the copy takes the bus, which has this on it */
+void video_dma_begin(uint8_t bus) {
+  p.hdma_first = 1;
+  p.hdma_bus = bus;
+}
+
 /* a byte of the copy, the CPU being stopped for it */
 void video_dma_byte(void) {
+  uint8_t value = hdma_read();
+  p.hdma_first = 0;
   /* lost while the PPU has VRAM, which is rougher than the hardware: there, one byte in four gets in between the */
   /* fetcher's reads */
   if (!p.vram_write_locked) {
-    vram_write(VRAM_START + (p.hdma_dest & (VRAM_SIZE - 1)), mem_read(p.hdma_source));
+    vram_write(VRAM_START + (p.hdma_dest & (VRAM_SIZE - 1)), value);
   }
   ++p.hdma_source;
   ++p.hdma_dest;
-  if (--p.hdma_run % HDMA_BLOCK == 0) {
-    --p.hdma_blocks;
-    p.hdma_status = p.hdma_blocks - 1;
-    if (p.hdma_blocks == 0) {
-      p.hdma_status = HDMA_IDLE;
-    }
+  if (--p.hdma_run % HDMA_BLOCK != 0) {
+    return;
+  }
+  --p.hdma_blocks;
+  p.hdma_status = p.hdma_blocks - 1;
+  if (p.hdma_blocks == 0) {
+    p.hdma_status = HDMA_IDLE;
+  } else if (p.hdma_dest == 0) {
+    /* The destination is all 16 bits of HDMA3 and HDMA4, of which the low 13 pick the byte of VRAM: it goes */
+    /* round VRAM until it passes FFFF, and there the copy stops, with HDMA5 saying what was left. */
+    p.hdma_status |= HDMA_HBLANK;
+    p.hdma_blocks = 0;
+    p.hdma_run = 0;
   }
 }
 
@@ -1465,10 +1495,10 @@ static void register_set(uint16_t address, uint8_t value, int lead) {
       p.hdma_source = (p.hdma_source & ~BYTE_MASK) | (value & HDMA_SOURCE);
       break;
     case IO_HDMA3:
-      p.hdma_dest = ((p.hdma_dest & BYTE_MASK) | value << BYTE_BITS) & HDMA_DEST;
+      p.hdma_dest = (p.hdma_dest & BYTE_MASK) | value << BYTE_BITS;
       break;
     case IO_HDMA4:
-      p.hdma_dest = ((p.hdma_dest & ~BYTE_MASK) | value) & HDMA_DEST;
+      p.hdma_dest = (p.hdma_dest & ~BYTE_MASK) | (value & HDMA_SOURCE);
       break;
     case IO_HDMA5:
       hdma_start(value);

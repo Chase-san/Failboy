@@ -82,6 +82,7 @@ static void bus_dma(void) {
     return;
   }
   uint32_t cycles = M_CYCLE;
+  video_dma_begin(mem_read(r.PC));
   run_machine(M_CYCLE);
   while (video_dma_pending()) {
     bus_sync();

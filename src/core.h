@@ -164,6 +164,7 @@ void video_write(uint16_t, uint8_t);
 uint32_t video_write_lead(uint16_t); /* T-cycles before its M-cycle's end that a write to this address lands */
 int video_locked(uint16_t, int);     /* the PPU has VRAM or OAM, and the CPU's read (or if set, write) of it fails */
 int video_dma_pending(void);         /* CGB: VRAM DMA has bytes to copy, with the CPU stopped */
+void video_dma_begin(uint8_t);       /* it takes the bus, which has this on it */
 void video_dma_byte(void);           /* and copies one */
 const uint16_t *video_pixels(void);  /* LCD_WIDTH * LCD_HEIGHT: a DMG's shades, 0 (lightest) to 3, or a CGB's colors */
 uint32_t video_frames(void);         /* frames finished so far; one more each time VBlank starts */
