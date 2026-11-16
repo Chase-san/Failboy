@@ -19,22 +19,22 @@
 /* When each channel steps, to the T-cycle, is held to tests that read the channels back through a CGB's PCM12 and */
 /* PCM34: SameSuite's, whose results are a CPU CGB D's and E's, with Blargg's, Gambatte's and DocBoy's sound tests */
 /* beside them. Where it's known to differ from the hardware: */
-/* - The channel timing is the one both of the core's CGBs and its DMG use. SameSuite's notes say a CPU CGB C reads */
-/*   a glitched amplitude from PCM12 and PCM34 in the M-cycle a square or the noise changes, which isn't understood */
-/*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. A */
-/*   real one bears that out: on a CGB-CPU-04, channel_1_align shows seven of its 48 samples wrong (00 for 08, one */
-/*   where the level rises with the trigger aligned one way, three with it the other), and on a CGB-CPU-05 none. */
-/* - What a write to NRx2 does to a playing channel's volume is a CPU CGB D's and E's. A DMG's differs, and the */
-/*   core's DMG leaves the volume alone. */
+/* - The core's CGB C is held to a real one, a CGB-CPU-04, through the survey ROM in tests/hw/survey, whose save */
+/*   from that console is in tests/phys_results: its square and noise channels read through PCM12 and PCM34 as the */
+/*   glitch SameSuite's notes leave unexplained has them (pcm()), come a tick later than a CPU CGB D's at double */
+/*   speed (trigger()), and take a write to NRx2 as a DMG is said to (write_envelope()). Of the survey's sound */
+/*   readings on that console, two differ from the core's: the noise at double speed with a clock shift of 1 and of */
+/*   2. A real CPU CGB C fails most of SameSuite's square and noise tests, and so now does the core's. */
+/* - What a write to NRx2 does to a playing channel's volume is told apart for a CPU CGB D (SameSuite's tests, and a */
+/*   CGB-CPU-05 in all 128 cases of the survey) and for a CPU CGB C (the survey). The core's DMG does as its CGB C; */
+/*   a DMG has no PCM12 to read it back through, so that rests on what's long been told of it. */
 /* - Of SameSuite's APU tests, these fail: channel_1_sweep_restart_2 (which its notes say a CPU CGB D fails too), */
 /*   channel_4_freq_change, the envelope's speed change and two cases of the NRx2 glitch after a long wait (both of */
 /*   each square), and the three that start the APU with DIV's bit 4 set (a skipped first step of the frame */
 /*   sequencer). */
-/* - The sweep's check for overflow comes some M-cycles after a trigger or a new frequency, and a write to NR10 or */
-/*   another trigger in between changes it. The waits are fitted to SameSuite's sweep and sweep_restart tests, with */
-/*   a shift of 7 in every case. DocBoy has some 325 tests of the same thing: with the fit 232 more of them pass */
-/*   on a CGB and 207 that passed fail (49 and 41 on a DMG), mostly in the same families (disable on a second or */
-/*   third trigger), so the kind of thing is right and what the wait goes by isn't yet. */
+/* - The sweep's check for overflow waits by its shift (SWEEP_CHECK_UNIT): from a trigger that's measured on five */
+/*   consoles, and from a sweep clock or a write to NR10 it's fitted to SameSuite's sweep tests. DocBoy has some 325 */
+/*   tests of the sweep's timing, of which a good many still fail. */
 /* - The noise channel's wait after a trigger is fitted to tests at the normal speed. At double speed, 60 of DocBoy's */
 /*   tests of triggering it again while it plays (double_speed/apu/ch4, retrigger) passed before the fit and fail */
 /*   with it, against 805 of DocBoy's that came with it. A write to NR43 stepping the LFSR, when it picks a set bit */
@@ -103,6 +103,7 @@ enum {
   PAN_RIGHT = 0x01,
   NR52_POWER = 0x80,
   PCM_HIGH_SHIFT = 4, /* PCM12/PCM34: the second channel's output is the high nibble */
+  PCM_GLITCH = 4,     /* T-cycles of the normal speed's M-cycle; see pcm() */
 };
 
 enum {
@@ -201,6 +202,8 @@ struct channel {
   int level;    /* squares: the duty's bit for this step, as it was when the step began */
   int quiet;    /* squares: triggered from stopped, and not at its first step yet */
   int settled;  /* the envelope has run into 0 or 15 and stopped */
+  int before;   /* its output before its last step that changed it */
+  int since;    /* T-cycles since that step, as far as PCM_GLITCH goes */
 };
 
 static struct channel channels[CHANNELS];
@@ -367,6 +370,21 @@ static void write_envelope(int ch, uint8_t old, uint8_t value) {
   struct channel *c = &channels[ch];
   int running = !c->settled;
   int had_period = (old & ENVELOPE_PERIOD) != 0;
+  if (!cgb_d) {
+    /* Before the CPU CGB D it's the rule long told of the DMG, which a CGB-CPU-04 bears out in every case of */
+    /* SameSuite's channel_1_volume (tests/hw/survey): one up if the old envelope had no period, two if it had and */
+    /* was falling, and then turned over if the direction changed. */
+    if (!had_period && running) {
+      ++c->volume;
+    } else if (!(old & ENVELOPE_RISE)) {
+      c->volume += 2;
+    }
+    if ((old ^ value) & ENVELOPE_RISE) {
+      c->volume = VOLUME_MAX + 1 - c->volume;
+    }
+    c->volume &= VOLUME_MAX;
+    return;
+  }
   int clock = (value & ENVELOPE_PERIOD) != 0 && !had_period && running;
   if ((value & ENVELOPE_SHAPE) == ENVELOPE_RISE && (old & ENVELOPE_SHAPE) == ENVELOPE_RISE && running) {
     clock = 1; /* rising with no period, before and after */
@@ -430,8 +448,14 @@ static void trigger(int ch, int extra_clock) {
     c->settled = 0;
   }
   if (ch != WAVE) {
-    /* the squares and the noise channel step on a 1 MHz clock, and the wait starts at its next tick */
+    /* The squares and the noise channel step on a 1 MHz clock, and the wait starts at its next tick. A trigger */
+    /* that lands on a tick starts from it. At double speed, where one can land between ticks as well, a CPU CGB C */
+    /* starts from the tick after instead: a CGB-CPU-04's channels come a tick later than a CGB-CPU-05's there, and */
+    /* with them where the trigger falls between ticks (tests/hw/survey). */
     c->timer += (SQUARE_MULTIPLIER - grid % SQUARE_MULTIPLIER) % SQUARE_MULTIPLIER;
+    if (cgb && !cgb_d && double_speed && grid % SQUARE_MULTIPLIER == 0) {
+      c->timer += SQUARE_MULTIPLIER;
+    }
   }
   if (ch == SQUARE1 || ch == SQUARE2) {
     /* The duty cycle carries on from where it was, and a channel that was stopped puts nothing out until its */
@@ -658,10 +682,18 @@ static void catch_up(void) {
         continue;
       }
       c->timer -= run;
+      if (c->since < PCM_GLITCH) {
+        c->since += run;
+      }
       if (c->timer == 0) {
+        int was = output(ch);
         c->timer = period(ch);
         advance(ch);
         levels_stale = 1;
+        if (output(ch) != was) {
+          c->before = was;
+          c->since = 0;
+        }
       }
     }
     sweep_hold -= run;
@@ -724,12 +756,28 @@ static uint16_t wave_address(uint16_t address) {
   return WAVE_RAM + channels[WAVE].position / 2;
 }
 
+/* A channel's output as PCM12 or PCM34 has it. A CPU CGB C reads a square or the noise in the M-cycle a step changes */
+/* it as what it was ANDed with what it becomes, so a rise shows an M-cycle late and a fall on time: that's the */
+/* glitch SameSuite's notes leave unexplained, as a CGB-CPU-04 shows it (tests/hw/survey). There the noise shows it */
+/* at the normal speed and not at double speed. The wave channel hasn't got it, by SameSuite's channel_3_and_glitch. */
+static int pcm(int ch) {
+  const struct channel *c = &channels[ch];
+  int now = output(ch);
+  if (cgb_d || ch == WAVE || (ch == NOISE && double_speed)) {
+    return now;
+  }
+  if (c->since >= (PCM_GLITCH >> double_speed)) {
+    return now;
+  }
+  return now & c->before;
+}
+
 uint8_t audio_read(uint16_t address) {
   if (address == IO_PCM12 || address == IO_PCM34) {
     /* CGB: the digital outputs of channels 1 and 2, or 3 and 4, a nibble each */
     int ch = (address - IO_PCM12) * 2;
     catch_up();
-    return output(ch) | output(ch + 1) << PCM_HIGH_SHIFT;
+    return pcm(ch) | pcm(ch + 1) << PCM_HIGH_SHIFT;
   }
   if (address >= WAVE_RAM) {
     address = wave_address(address);
@@ -799,7 +847,7 @@ void audio_write(uint16_t address, uint8_t value) {
     case NR12:
     case NR22:
     case NR42:
-      if (channels[ch].on && cgb) {
+      if (channels[ch].on) {
         write_envelope(ch, old, value);
       }
       /* fallthrough */
