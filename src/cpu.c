@@ -70,6 +70,35 @@ static void run_machine(uint32_t cycles) {
 
 /* Each of the CPU's reads and writes takes an M-cycle, which the rest of the machine runs through after the access. */
 /* One that collides with OAM DMA doesn't get through: a read gets what DMA has on the bus, a write goes nowhere. */
+/* CGB: VRAM DMA takes the bus between two of the CPU's instructions, not while it's halted, and the CPU stands */
+/* still for an M-cycle and then while it copies, 2 T-cycles of the normal speed a byte: a block of 16 bytes is 9 */
+/* M-cycles at the normal speed and 17 at double. DocBoy's hdma tests have their timers and HDMA5 show all of that. */
+static void bus_dma(void) {
+  if (!cgb) {
+    return;
+  }
+  bus_sync();
+  if (!video_dma_pending()) {
+    return;
+  }
+  uint32_t cycles = M_CYCLE;
+  run_machine(M_CYCLE);
+  while (video_dma_pending()) {
+    bus_sync();
+    video_dma_byte();
+    run_machine(M_CYCLE);
+    cycles += M_CYCLE;
+    if (!double_speed && video_dma_pending()) {
+      /* two bytes to an M-cycle at the normal speed: the second with the PPU halfway through it */
+      video_tick(video_owed / 2);
+      video_owed -= video_owed / 2;
+      video_dma_byte();
+    }
+  }
+  cycle_counter += cycles;
+  bus_cycles += cycles;
+}
+
 uint8_t bus_read(uint16_t address) {
   uint8_t value;
   bus_sync();
@@ -333,6 +362,9 @@ uint32_t step(void) {
   uint64_t start = cycle_counter;
   uint8_t speed = double_speed; /* which a STOP can change, once its own M-cycles have run */
   bus_cycles = 0;
+  if (!halted) {
+    bus_dma();
+  }
   cpu_interrupt();
   if (halted) {
     halt_cycle();

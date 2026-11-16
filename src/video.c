@@ -79,9 +79,12 @@
 /* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
 /*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and at double speed which */
 /*   half of the M-cycle it is, is a guess. Gambatte's oamdma results mostly fail, on either machine. */
-/* - VRAM DMA copies in no time, with the CPU not held up; an HBlank copy's block goes at the HBlank interrupt's */
-/*   dot, and one started while STAT shows mode 0 goes at once, which the first dot of a line and the line after the */
-/*   LCD comes on also show. About half of Gambatte's dma results fail. */
+/* - VRAM DMA stops the CPU between two instructions and copies a byte every 2 dots (bus_dma, cpu.c), an HBlank */
+/*   copy's block asked for a dot after the HBlank interrupt; that much DocBoy's timing tests and Gambatte's dma */
+/*   results agree on. What isn't done: a copy that runs into the drawing loses every byte, where the hardware lets */
+/*   one in four through between the fetcher's reads (83 DocBoy tests); the source being VRAM, OAM, I/O or echo RAM, */
+/*   or the destination running off the end of VRAM, are plain reads and a wrap; OAM DMA running at the same time */
+/*   isn't allowed for; and a halted CPU's copy just waits for it to wake. */
 /* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
 /* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
 /*   at once. */
@@ -156,6 +159,7 @@ enum {
   M_CYCLE_DOT = 1,   /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
   DOT_PALETTES = 84, /* CGB: palette RAM goes to the PPU, until 2 dots after the HBlank interrupt */
   PALETTES_KEPT = 2,
+  HDMA_AFTER_HBLANK = 1,        /* CGB: dots after the HBlank interrupt that an HBlank copy's block is asked for */
   CGB_C_PALETTE_WRITE_LEAD = 1, /* dots before the end of the M-cycle that a write to BGP, OBP0 or OBP1 lands, */
   CGB_E_PALETTE_WRITE_LEAD = 2, /* on a CGB C and on a CGB E */
   SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
@@ -325,6 +329,7 @@ struct ppu {
   uint16_t hdma_source;
   uint16_t hdma_dest;  /* offset into VRAM */
   uint8_t hdma_blocks; /* left to copy, a block each HBlank */
+  uint16_t hdma_run;   /* bytes the CPU is to be stopped for now */
   uint8_t hdma_status;
 
   /* where it's got to */
@@ -501,23 +506,30 @@ static uint16_t mix(uint8_t bg_color, uint8_t bg_attr, uint8_t obj_color, uint8_
 /* **************************************** */
 /* CGB VRAM DMA, into the VRAM bank the CPU sees */
 
-static void hdma_copy(void) {
-  for (int i = 0; i < HDMA_BLOCK; ++i) {
-    vram_write(VRAM_START + ((p.hdma_dest + i) & (VRAM_SIZE - 1)), mem_read(p.hdma_source + i));
-  }
-  p.hdma_source += HDMA_BLOCK;
-  p.hdma_dest += HDMA_BLOCK;
-}
+int video_dma_pending(void) { return p.hdma_run != 0; }
 
-/* the start of an HBlank: a block of an HBlank copy */
-static void hdma_hblank(void) {
-  if (p.hdma_blocks) {
-    hdma_copy();
+/* a byte of the copy, the CPU being stopped for it */
+void video_dma_byte(void) {
+  /* lost while the PPU has VRAM, which is rougher than the hardware: there, one byte in four gets in between the */
+  /* fetcher's reads */
+  if (!p.vram_write_locked) {
+    vram_write(VRAM_START + (p.hdma_dest & (VRAM_SIZE - 1)), mem_read(p.hdma_source));
+  }
+  ++p.hdma_source;
+  ++p.hdma_dest;
+  if (--p.hdma_run % HDMA_BLOCK == 0) {
     --p.hdma_blocks;
     p.hdma_status = p.hdma_blocks - 1;
     if (p.hdma_blocks == 0) {
       p.hdma_status = HDMA_IDLE;
     }
+  }
+}
+
+/* the start of an HBlank: a block of an HBlank copy is asked for */
+static void hdma_hblank(void) {
+  if (p.hdma_blocks && !p.hdma_run) {
+    p.hdma_run = HDMA_BLOCK;
   }
 }
 
@@ -535,11 +547,10 @@ static void hdma_start(uint8_t value) {
       hdma_hblank();
     }
   } else {
-    /* all at once, with the CPU stopped (for no time at all, here) */
-    for (; blocks > 0; --blocks) {
-      hdma_copy();
-    }
-    p.hdma_status = HDMA_IDLE;
+    /* all at once, with the CPU stopped */
+    p.hdma_blocks = blocks;
+    p.hdma_status = p.hdma_blocks - 1;
+    p.hdma_run = blocks * HDMA_BLOCK;
   }
 }
 
@@ -1065,6 +1076,9 @@ static void pixels_dot(void) {
 /* a line on the screen, bar its pixels */
 static void line_dot(void) {
   uint16_t d = p.dot;
+  if (p.hblank_dot != NO_DOT && d == p.hblank_dot + HDMA_AFTER_HBLANK) {
+    hdma_hblank();
+  }
   if (p.first_line) {
     if (d == DOT_DRAWING + p.late - DOT_SCAN_EACH) {
       p.oam_write_locked = 1;
@@ -1117,7 +1131,6 @@ static void line_dot(void) {
   } else if (d == p.hblank_dot) {
     hblank_mode();
     stat_update();
-    hdma_hblank();
   } else if (d == DOT_WINDOW_Y) {
     if ((IO_REG(IO_LCDC) & LCDC_WIN_ENABLE) && IO_REG(IO_WY) == p.line) {
       p.wy_triggered = 1;
