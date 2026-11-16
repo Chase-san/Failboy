@@ -118,13 +118,17 @@ enum {
   SQUARE_MULTIPLIER = 4,
   WAVE_MULTIPLIER = 2,
   SQUARE_STEPS = 8,
-  /* The frame sequencer's clock reaches the channels before the M-cycle it falls in has been counted for them, */
-  /* so a wait that starts at one is an M-cycle longer here than on the hardware, and one that ends at one shorter. */
-  SWEEP_CHECK_WAIT = 36,    /* T-cycles from a trigger or a sweep's new frequency to its check of the one after */
-  SWEEP_CHECK_REWRITE = 28, /* and from a write to NR10 that comes while that check is on its way */
-  SWEEP_TRIGGER_HOLD = 8,   /* a sweep clock less than this many T-cycles after a trigger does nothing */
-  SQUARE_START_WAIT = 8,    /* T-cycles a square channel triggered from stopped waits on top of its period */
-  SQUARE_RESTART_WAIT = 4,  /* and one triggered while it plays */
+  /* The sweep works its next frequency out a bit of the shift at a time, an M-cycle each: the check for overflow */
+  /* comes the shift and 3 M-cycles after a trigger from stopped, measured on a DMG, an MGB, a CPU CGB C and D and an */
+  /* AGB alike (tests/hw/survey), and one sooner after a trigger while it plays (SameSuite's sweep_restart). The */
+  /* frame sequencer's clock reaches the channels before the M-cycle it falls in has been counted for them, so the */
+  /* wait from one of its sweep clocks is an M-cycle longer here than on the hardware: the shift and 2, for 1. */
+  SWEEP_CHECK_UNIT = 4,    /* T-cycles to a bit of the shift */
+  SWEEP_CHECK_START = 3,   /* M-cycles on top of the shift, from stopped */
+  SWEEP_CHECK_RESTART = 2, /* and while playing, or from a sweep clock */
+  SWEEP_TRIGGER_HOLD = 8,  /* a sweep clock less than this many T-cycles after a trigger does nothing */
+  SQUARE_START_WAIT = 8,   /* T-cycles a square channel triggered from stopped waits on top of its period */
+  SQUARE_RESTART_WAIT = 4, /* and one triggered while it plays */
   WAVE_SAMPLES = 32,
   WAVE_TRIGGER_DELAY = 6, /* T-cycles a triggered wave channel waits on top of its period before its first step */
   WAVE_CORRUPT_AT = 2,    /* DMG: a trigger this many T-cycles before the channel's next read corrupts wave RAM */
@@ -285,7 +289,7 @@ static int sweep_next(void) {
   return sweep_frequency + delta;
 }
 
-static void trigger_sweep(void) {
+static void trigger_sweep(int was_on) {
   uint8_t nr10 = IO_REG(NR10);
   sweep_frequency = frequency(SQUARE1);
   sweep_timer = timer_period((nr10 & NR10_PERIOD) >> NR10_PERIOD_SHIFT);
@@ -294,7 +298,11 @@ static void trigger_sweep(void) {
   sweep_check = 0;
   sweep_hold = SWEEP_TRIGGER_HOLD;
   if (nr10 & NR10_SHIFT) {
-    sweep_check = SWEEP_CHECK_WAIT; /* the next frequency is worked out, only to check for overflow */
+    /* the next frequency is worked out, only to check for overflow */
+    sweep_check = ((nr10 & NR10_SHIFT) + SWEEP_CHECK_START) * SWEEP_CHECK_UNIT;
+    if (was_on) {
+      sweep_check = ((nr10 & NR10_SHIFT) + SWEEP_CHECK_RESTART) * SWEEP_CHECK_UNIT;
+    }
   }
 }
 
@@ -316,7 +324,8 @@ static void clock_sweep(void) {
     sweep_frequency = next;
     IO_REG(NR13) = next & 0xFF;
     IO_REG(NR14) = (IO_REG(NR14) & ~CONTROL_FREQUENCY) | (next >> 8);
-    sweep_check = SWEEP_CHECK_WAIT; /* it's worked out again with the new frequency, only to check for overflow */
+    /* it's worked out again with the new frequency, only to check for overflow */
+    sweep_check = ((nr10 & NR10_SHIFT) + SWEEP_CHECK_RESTART) * SWEEP_CHECK_UNIT;
   }
 }
 
@@ -436,7 +445,7 @@ static void trigger(int ch, int extra_clock) {
   }
   switch (ch) {
     case SQUARE1:
-      trigger_sweep();
+      trigger_sweep(was_on);
       break;
     case WAVE:
       c->position = 0; /* the sample playing stays until the first step */
@@ -776,12 +785,9 @@ void audio_write(uint16_t address, uint8_t value) {
       if (sweep_negated && !(value & NR10_NEGATE)) {
         channels[SQUARE1].on = 0;
       }
-      /* a check that's on its way is started over, or with no shift left to make it with, dropped */
-      if (sweep_check > 0) {
+      /* a check that's on its way is made when it was going to be, with the new shift; with none, it's dropped */
+      if (!(value & NR10_SHIFT)) {
         sweep_check = 0;
-        if (value & NR10_SHIFT) {
-          sweep_check = SWEEP_CHECK_REWRITE;
-        }
       }
       break;
     case NR11:
