@@ -28,6 +28,7 @@ void SWAP_H(void);
 void SWAP_L(void);
 void SWAP_aHL(void);
 
+void RLC_A(void);
 void RLC_B(void);
 void RLC_C(void);
 void RLC_D(void);
@@ -36,6 +37,7 @@ void RLC_H(void);
 void RLC_L(void);
 void RLC_aHL(void);
 
+void RL_A(void);
 void RL_B(void);
 void RL_C(void);
 void RL_D(void);
@@ -44,6 +46,7 @@ void RL_H(void);
 void RL_L(void);
 void RL_aHL(void);
 
+void RRC_A(void);
 void RRC_B(void);
 void RRC_C(void);
 void RRC_D(void);
@@ -52,6 +55,7 @@ void RRC_H(void);
 void RRC_L(void);
 void RRC_aHL(void);
 
+void RR_A(void);
 void RR_B(void);
 void RR_C(void);
 void RR_D(void);

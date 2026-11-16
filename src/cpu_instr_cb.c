@@ -63,6 +63,10 @@ static inline uint8_t RLC_n(register uint8_t n) {
   return n;
 }
 
+void RLC_A(void) {
+  r.A = RLC_n(r.A);
+}
+
 void RLC_B(void) {
   r.B = RLC_n(r.B);
 }
@@ -98,6 +102,10 @@ static inline uint8_t RL_n(register uint8_t n) {
   r.F_C = bit;
   r.F_Z = !n;
   return n;
+}
+
+void RL_A(void) {
+  r.A = RL_n(r.A);
 }
 
 void RL_B(void) {
@@ -137,6 +145,10 @@ static inline uint8_t RRC_n(register uint8_t n) {
   return n;
 }
 
+void RRC_A(void) {
+  r.A = RRC_n(r.A);
+}
+
 void RRC_B(void) {
   r.B = RRC_n(r.B);
 }
@@ -174,6 +186,10 @@ static inline uint8_t RR_n(register uint8_t n) {
   return n;
 }
 
+void RR_A(void) {
+  r.A = RR_n(r.A);
+}
+
 void RR_B(void) {
   r.B = RR_n(r.B);
 }
@@ -203,6 +219,7 @@ void RR_aHL(void) {
 }
 
 static inline uint8_t SLA_n(register uint8_t n) {
+  r.F = 0;
   r.F_C = (n >> 7) & 1;
   n <<= 1;
   r.F_Z = !n;
@@ -242,8 +259,9 @@ void SLA_aHL(void) {
 }
 
 static inline uint8_t SRA_n(register uint8_t n) {
+  r.F = 0;
   r.F_C = n & 1;
-  n = ((char)n) >> 1;
+  n = (n >> 1) | (n & 0x80);
   r.F_Z = !n;
   return n;
 }
@@ -281,6 +299,7 @@ void SRA_aHL(void) {
 }
 
 static inline uint8_t SRL_n(register uint8_t n) {
+  r.F = 0;
   r.F_C = n & 1;
   n >>= 1;
   r.F_Z = !n;

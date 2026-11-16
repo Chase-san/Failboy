@@ -389,12 +389,14 @@ void LDHL_SP_n(void) {
 }
 
 void LD_ann_SP(void) {
-  write16(rpc16(), r.SP);
+  uint16_t addr = rpc16();
+  write(addr, r.SPLO);
+  write(addr + 1, r.SPHI);
 }
 
 static inline void PUSH16(uint16_t n) {
-  r.SP -= 2;
-  write16(r.SP, n);
+  write(--r.SP, n >> 8);
+  write(--r.SP, n & 0xFF);
 }
 
 void PUSH_AF(void) {
@@ -414,9 +416,8 @@ void PUSH_HL(void) {
 }
 
 static inline uint16_t POP16(void) {
-  uint16_t ret = read16(r.SP);
-  r.SP += 2;
-  return ret;
+  uint16_t lo = read(r.SP++);
+  return lo | read(r.SP++) << 8;
 }
 
 /* Lower bits of F are never ever set. */
@@ -484,40 +485,50 @@ void ADD_A_n(void) {
   ADD(rpc8());
 }
 
+static inline void ADC(uint8_t n) {
+  register uint8_t c = r.F_C;
+  register int res = r.A + n + c;
+  r.F = 0;
+  r.F_H = (r.A & 0xF) + (n & 0xF) + c > 0xF;
+  r.F_C = res > 0xFF;
+  r.A = res;
+  r.F_Z = !r.A;
+}
+
 void ADC_A_A(void) {
-  ADD(r.A + r.F_C);
+  ADC(r.A);
 }
 
 void ADC_A_B(void) {
-  ADD(r.B + r.F_C);
+  ADC(r.B);
 }
 
 void ADC_A_C(void) {
-  ADD(r.C + r.F_C);
+  ADC(r.C);
 }
 
 void ADC_A_D(void) {
-  ADD(r.D + r.F_C);
+  ADC(r.D);
 }
 
 void ADC_A_E(void) {
-  ADD(r.E + r.F_C);
+  ADC(r.E);
 }
 
 void ADC_A_H(void) {
-  ADD(r.H + r.F_C);
+  ADC(r.H);
 }
 
 void ADC_A_L(void) {
-  ADD(r.L + r.F_C);
+  ADC(r.L);
 }
 
 void ADC_A_aHL(void) {
-  ADD(read(r.HL) + r.F_C);
+  ADC(read(r.HL));
 }
 
 void ADC_A_n(void) {
-  ADD(rpc8() + r.F_C);
+  ADC(rpc8());
 }
 
 static inline void SUB(uint8_t n) {
@@ -565,40 +576,51 @@ void SUB_n(void) {
   SUB(rpc8());
 }
 
+static inline void SBC(uint8_t n) {
+  register uint8_t c = r.F_C;
+  register int res = r.A - n - c;
+  r.F = 0;
+  r.F_N = 1;
+  r.F_H = (r.A & 0xF) - (n & 0xF) - c < 0;
+  r.F_C = res < 0;
+  r.A = res;
+  r.F_Z = !r.A;
+}
+
 void SBC_A_A(void) {
-  SUB(r.A + r.F_C);
+  SBC(r.A);
 }
 
 void SBC_A_B(void) {
-  SUB(r.B + r.F_C);
+  SBC(r.B);
 }
 
 void SBC_A_C(void) {
-  SUB(r.C + r.F_C);
+  SBC(r.C);
 }
 
 void SBC_A_D(void) {
-  SUB(r.D + r.F_C);
+  SBC(r.D);
 }
 
 void SBC_A_E(void) {
-  SUB(r.E + r.F_C);
+  SBC(r.E);
 }
 
 void SBC_A_H(void) {
-  SUB(r.H + r.F_C);
+  SBC(r.H);
 }
 
 void SBC_A_L(void) {
-  SUB(r.L + r.F_C);
+  SBC(r.L);
 }
 
 void SBC_A_aHL(void) {
-  SUB(read(r.HL) + r.F_C);
+  SBC(read(r.HL));
 }
 
 void SBC_A_n(void) {
-  SUB(rpc8() + r.F_C);
+  SBC(rpc8());
 }
 
 static inline void AND(uint8_t n) {
@@ -687,7 +709,7 @@ void OR_n(void) {
 }
 
 static inline void XOR(uint8_t n) {
-  r.A |= n;
+  r.A ^= n;
   r.F = 0;
   r.F_Z = !r.A;
 }
@@ -924,7 +946,6 @@ void RLCA(void) {
   r.A = (r.A << 1) | bit;
   r.F = 0;
   r.F_C = bit;
-  r.F_Z = !r.A;
 }
 
 void RLA(void) {
@@ -932,7 +953,6 @@ void RLA(void) {
   r.A = (r.A << 1) | r.F_C;
   r.F = 0;
   r.F_C = bit;
-  r.F_Z = !r.A;
 }
 
 void RRCA(void) {
@@ -940,7 +960,6 @@ void RRCA(void) {
   r.A = (r.A >> 1) | (bit << 7);
   r.F = 0;
   r.F_C = bit;
-  r.F_Z = !r.A;
 }
 
 void RRA(void) {
@@ -948,7 +967,6 @@ void RRA(void) {
   r.A = (r.A >> 1) | (r.F_C << 7);
   r.F = 0;
   r.F_C = bit;
-  r.F_Z = !r.A;
 }
 
 /* **************************************** */
@@ -1067,35 +1085,35 @@ void CALL_C_nn(void) {
 /* **************************************** */
 /* Restarts */
 void RST00(void) {
-  r.PC = 0x00;
+  CALL(0x00);
 }
 
 void RST08(void) {
-  r.PC = 0x08;
+  CALL(0x08);
 }
 
 void RST10(void) {
-  r.PC = 0x10;
+  CALL(0x10);
 }
 
 void RST18(void) {
-  r.PC = 0x18;
+  CALL(0x18);
 }
 
 void RST20(void) {
-  r.PC = 0x20;
+  CALL(0x20);
 }
 
 void RST28(void) {
-  r.PC = 0x28;
+  CALL(0x28);
 }
 
 void RST30(void) {
-  r.PC = 0x30;
+  CALL(0x30);
 }
 
 void RST38(void) {
-  r.PC = 0x38;
+  CALL(0x38);
 }
 
 /* **************************************** */
