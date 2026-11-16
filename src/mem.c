@@ -42,6 +42,18 @@ void vram_write(uint16_t, uint8_t); /* 8000-9FFF */
 static uint8_t wram[WRAM_BANKS * WRAM_BANK_SIZE]; /* 8 kB of work RAM, or a CGB's 32 kB */
 static uint8_t hram[HRAM_SIZE];
 uint8_t oam[OAM_SIZE];
+
+/* FEA0-FEFF, which nothing is meant to use. A DMG has nothing there. A CGB has 48 bytes: FEA0-FEBF take one each, */
+/* and the other 16 turn up four times over, from FEC0 to FEFF. That's what Gambatte's results for a CGB C and */
+/* DocBoy's tests both find. Pan Docs has it so up to a CGB D only, a CGB E reading back a pattern made of the */
+/* address whatever was written; the shootout's cgb-acid-hell passes with that or with zeros and fails with this, */
+/* but DocBoy's 15 tests outnumber it, so the core's CGB E has the memory too. */
+enum {
+  UNUSED_PLAIN = 0x20,  /* the bytes with an address each */
+  UNUSED_SHARED = 0x10, /* and the ones that repeat */
+};
+
+static uint8_t unused[UNUSED_PLAIN + UNUSED_SHARED];
 uint8_t vram[VRAM_BANKS * VRAM_SIZE]; /* 8 kB of video RAM, or a CGB's 16 kB */
 
 /* where D000-DFFF is in wram: bank 1, unless a CGB picks another */
@@ -54,6 +66,7 @@ void mem_reset(int clear) {
     memset(wram, 0, sizeof(wram));
     memset(hram, 0, sizeof(hram));
     memset(oam, 0, sizeof(oam));
+    memset(unused, 0, sizeof(unused));
   }
   memset(vram, 0, sizeof(vram));
   wram_bank_offset = WRAM_BANK_SIZE;
@@ -139,9 +152,21 @@ uint8_t wram_read(uint16_t address) {
 
 uint8_t wrame_read(uint16_t address) { return wram_read(address - (ECHO_START - WRAM_START)); }
 
+/* where in unused[] an address from FEA0 up is */
+static unsigned int unused_index(uint16_t address) {
+  unsigned int offset = address - (OAM_START + OAM_SIZE);
+  if (offset >= UNUSED_PLAIN) {
+    offset = UNUSED_PLAIN + offset % UNUSED_SHARED;
+  }
+  return offset;
+}
+
 uint8_t oam_read(uint16_t address) {
   if (address < OAM_START + OAM_SIZE) {
     return oam[address - OAM_START];
+  }
+  if (cgb) {
+    return unused[unused_index(address)];
   }
   return 0;
 }
@@ -239,6 +264,8 @@ void wrame_write(uint16_t address, uint8_t value) { wram_write(address - (ECHO_S
 void oam_write(uint16_t address, uint8_t value) {
   if (address < OAM_START + OAM_SIZE) {
     oam[address - OAM_START] = value;
+  } else if (cgb) {
+    unused[unused_index(address)] = value;
   }
 }
 

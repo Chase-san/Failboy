@@ -61,9 +61,9 @@
 /* - Three of the shootout battery's CGB tests (cgb-acid-hell, daid's ppu_scanline_bgp on a GBC and its */
 /*   speed_switch_timing_ly) once passed only with numbers fitted to them: the PPU running 2 dots ahead of the CPU, */
 /*   its pixels starting 2 dots sooner, palette writes landing 2 dots early. What they wanted was a halted CGB */
-/*   waking an M-cycle later (halt_cycle, cpu.c), as all three wait in HALT; with that they pass as a CGB E, and */
-/*   all but ppu_scanline_bgp as a CGB C, whose palette writes land a dot later. DocBoy's author says */
-/*   cgb-acid-hell fails on a real CGB-E, which this doesn't bear out. */
+/*   waking an M-cycle later (halt_cycle, cpu.c), as all three wait in HALT. cgb-acid-hell fails again, on either */
+/*   CGB, for reading FEA0-FEFF, where the two revisions the core's CGB E stands for seem to differ (mem.c); the */
+/*   other two pass as a CGB E, and speed_switch_timing_ly as a CGB C, whose palette writes land a dot later. */
 /* - That a CGB C's edges go unseen at double speed (dmg_edges()) is what Gambatte's results ask for, not a known */
 /*   mechanism: it may be when a CPU at that speed reads, and not the PPU doing anything else. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
@@ -424,7 +424,12 @@ int video_locked(uint16_t address, int writing) {
     }
     return p.vram_read_locked;
   }
-  if (address >= OAM_START && address < OAM_START + OAM_SIZE) {
+  /* a CGB's bytes after OAM, up to FEFF, are shut with it */
+  uint16_t oam_end = OAM_START + OAM_SIZE;
+  if (cgb) {
+    oam_end = IO_P1;
+  }
+  if (address >= OAM_START && address < oam_end) {
     if (writing) {
       return p.oam_write_locked;
     }
