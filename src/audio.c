@@ -46,6 +46,7 @@ enum {
   WAVE_RAM_SIZE = 0x10,
   WAVE_BOOT_EVEN = 0x00, /* what a CGB's boot ROM leaves in its bytes, turn about */
   WAVE_BOOT_ODD = 0xFF,
+  WAVE_OPEN = 0xFF, /* what a read of wave RAM gets when the wave channel has it */
   CHANNEL_REGISTERS = 5, /* NRx0 to NRx4 for channel x, from NR10 on; NR20 and NR40 are unused */
 };
 
@@ -91,6 +92,8 @@ enum {
   WAVE_MULTIPLIER = 2,
   SQUARE_STEPS = 8,
   WAVE_SAMPLES = 32,
+  WAVE_TRIGGER_DELAY = 6, /* T-cycles a triggered wave channel waits on top of its period before its first step */
+  WAVE_ACCESS_WINDOW = 2, /* DMG: T-cycles after the wave channel reads a byte in which the CPU can get at it too */
   TIMER_PERIOD_ZERO = 8, /* the sweep and envelope timers count a period of 0 as 8 */
   LFSR_RESET = 0x7FFF,
   LFSR_TOP = 14,       /* the new bit goes in at the top of the 15... */
@@ -163,6 +166,7 @@ static int sweep_timer;     /* sweep clocks until the next sweep */
 static int sweep_frequency; /* the sweep's own copy of channel 1's frequency */
 static int sweep_negated;   /* the sweep has subtracted since channel 1 was triggered */
 static uint8_t wave_sample; /* the wave channel's current 4-bit sample */
+static int wave_since;      /* T-cycles since the wave channel last read wave RAM, as far as that matters */
 static uint16_t lfsr = LFSR_RESET;
 
 static int pending;             /* T-cycles the channels haven't been run for yet */
@@ -302,6 +306,9 @@ static void trigger(int ch, int extra_clock) {
     }
   }
   c->timer = period(ch);
+  if (ch == WAVE) {
+    c->timer += WAVE_TRIGGER_DELAY;
+  }
   if (ch != WAVE) {
     c->volume = reg(ch, 2) >> ENVELOPE_VOLUME_SHIFT;
     c->envelope = timer_period(reg(ch, 2) & ENVELOPE_PERIOD);
@@ -383,6 +390,7 @@ static void advance(int ch) {
   struct channel *c = &channels[ch];
   switch (ch) {
     case WAVE: {
+      wave_since = 0;
       c->position = (c->position + 1) % WAVE_SAMPLES;
       uint8_t pair = IO_REG(WAVE_RAM + c->position / 2);
       if (c->position & 1) {
@@ -482,6 +490,9 @@ static void catch_up(void) {
     }
     pending -= run;
     sample_clock += run;
+    if (wave_since < WAVE_ACCESS_WINDOW) {
+      wave_since += run;
+    }
 
     for (int ch = 0; ch < CHANNELS; ++ch) {
       struct channel *c = &channels[ch];
@@ -530,6 +541,20 @@ void audio_sequencer_clock(void) {
   }
 }
 
+/* Wave RAM belongs to the wave channel while it plays: whatever address the CPU gives, it gets the byte the channel */
+/* is on. A DMG lets the CPU in only just as the channel reads the byte itself; the rest of the time a read finds */
+/* nothing (WAVE_OPEN) and a write goes nowhere (0 here). */
+static uint16_t wave_address(uint16_t address) {
+  catch_up();
+  if (!channels[WAVE].on) {
+    return address;
+  }
+  if (!cgb && wave_since >= WAVE_ACCESS_WINDOW) {
+    return 0;
+  }
+  return WAVE_RAM + channels[WAVE].position / 2;
+}
+
 uint8_t audio_read(uint16_t address) {
   if (address == IO_PCM12 || address == IO_PCM34) {
     /* CGB: the digital outputs of channels 1 and 2, or 3 and 4, a nibble each */
@@ -538,6 +563,10 @@ uint8_t audio_read(uint16_t address) {
     return output(ch) | output(ch + 1) << PCM_HIGH_SHIFT;
   }
   if (address >= WAVE_RAM) {
+    address = wave_address(address);
+    if (address == 0) {
+      return WAVE_OPEN;
+    }
     return IO_REG(address);
   }
   uint8_t value = IO_REG(address) | read_mask[address - NR10];
@@ -557,7 +586,10 @@ void audio_write(uint16_t address, uint8_t value) {
   catch_up();
   levels_stale = 1;
   if (address >= WAVE_RAM) {
-    IO_REG(address) = value;
+    address = wave_address(address);
+    if (address != 0) {
+      IO_REG(address) = value;
+    }
     return;
   }
   if (address > NR52) {
@@ -625,6 +657,7 @@ void audio_reset(void) {
   sweep_frequency = 0;
   sweep_negated = 0;
   wave_sample = 0;
+  wave_since = WAVE_ACCESS_WINDOW;
   lfsr = LFSR_RESET;
   pending = 0;
   handing_over = 0;
