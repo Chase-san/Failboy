@@ -23,27 +23,47 @@
 /* the interrupts and the locks on VRAM and OAM come, and mealybug-tearoom-tests' pictures (from a DMG-CPU B "blob") */
 /* for the pixels. The shootout battery's mealybug and Mooneye ppu tests, dmg-acid2 and strikethrough all pass. */
 /* */
-/* The CGB is a CPU CGB C, the revision with the most hardware results to go by: Gambatte's hwtests (taken to be from */
-/* a CGB-CPU-04), AGE's tests named for C, and mealybug's CGB-C pictures. Where those are silent it runs the DMG's */
-/* schedule, which AGE's names say a C shares for LY, the modes STAT shows and OAM. What it has of its own: palette */
-/* RAM locked while the pixels go (DOT_PALETTES), writes to BGP and OBP landing a dot early, the mode 0 that STAT */
-/* shows coming a dot later at double speed, and LCDC's tile data glitch. Against that evidence it stands at 2232 */
-/* of Gambatte's 3023 CGB results, 16 of AGE's 37 and 7 of mealybug's 27 pictures (2026-11-15). */
+/* The CGB is one of two revisions, a CPU CGB C or a CPU CGB E (cgb_e), which share all of the PPU but the few */
+/* places below. Nobody here can measure either, so each is held to other people's tests of it, and where those */
+/* disagree about one revision, the reading that passes more of them is the one kept: */
+/* - A CGB C to Gambatte's hwtests (taken to be from a CGB-CPU-04), AGE's tests named for B and C, and mealybug's */
+/*   CGB-C pictures: 2244 of Gambatte's 3023 CGB results, 20 of AGE's 37, 7 of mealybug's 27 (2026-11-15). */
+/* - A CGB E to DocBoy's test suite (whose CGB matches mealybug's CGB-D pictures wherever those differ from the */
+/*   CGB-C ones, and whose author writes of a real CGB-E), AGE's tests named for E, and mealybug's CGB-D pictures, D */
+/*   and E being taken as one: 1049 of the 2130 DocBoy tests that aren't of sound and 313 of 607 with a DMG game */
+/*   in, 19 of AGE's 37, 6 of mealybug's 20. That DocBoy's results are from that hardware is its author's word, */
+/*   in one comment; its README doesn't say. */
+/* A test of one revision is applied to the other too, unless the other's own tests say otherwise. What every CGB */
+/* has of its own: palette RAM locked while the pixels go (DOT_PALETTES), the mode 0 that STAT shows coming a dot */
+/* later at double speed, LCDC's tile data glitch, OAM closed to writes from a line's first dot, and VRAM open to */
+/* reads until the drawing. Where the two revisions part: */
+/* - A CGB C shows a DMG's edges between lines to a CPU at the normal speed (dmg_edges()): the LY=LYC flag dropping */
+/*   for a dot, mode 0 for line 0's first dot, LY reading 0 from line 153's dot 3. At double speed it doesn't, and */
+/*   a CGB E never does. AGE's ly and stat-mode tests come in a B/C and an E version, and each revision passes its */
+/*   own. */
+/* - Line 153 stops comparing LY for a while before it compares 0, but not on a CGB E. */
+/* - A write to BGP, OBP0 or OBP1 lands a dot before the end of its M-cycle on a CGB C and two on a CGB E. */
 /* */
 /* Where it's known to differ from the hardware, or is a guess: */
 /* - The OAM bug isn't emulated: on a DMG, a 16-bit INC or DEC (and some other instructions) of a register pointing */
 /*   into FE00-FEFF during the OAM scan corrupts OAM. Blargg's oam_bug 2, 4, 5 and 8 fail for it; it needs the CPU's */
 /*   instructions to tell the PPU. */
-/* - CGB, by what still fails of the evidence above: mode 3 writes to SCX, SCY, LCDC's map and tile data bits and the */
-/*   object bits (mealybug's CGB-C pictures; of the tile data glitch only one case is done, a tile index under 128 */
-/*   read as its own row); the window and LYC being switched on and off (Gambatte's window, lycEnable, m0enable and */
-/*   m2enable); the LCD coming on at odd moments (lcd_offset, display_startstate, enable_display); and what a speed */
-/*   switch does to the PPU and the timer (speedchange, AGE's spsw). Its locks on VRAM and OAM, and LY reading 0 on */
-/*   line 153, are as written for a later revision and unchecked for a C. */
-/* - Three of the shootout battery's CGB tests fail as a C: cgb-acid-hell (2 pixels), daid's ppu_scanline_bgp on a */
-/*   GBC and its speed_switch_timing_ly. They passed with numbers fitted to them, which the CGB-C evidence contradicts
- */
-/*   (AGE has a separate picture for BGP writes on a CGB-E); what revision their references are from isn't known. */
+/* - Either CGB, by what still fails of its evidence: mode 3 writes to SCX, SCY, LCDC's map and tile data bits and */
+/*   the object bits (mealybug's pictures; of the tile data glitch only one case is done, a tile index under 128 */
+/*   read as its own row, and about 110 of DocBoy's pictures are of it); the window and LYC being switched on and */
+/*   off (Gambatte's window, lycEnable, m0enable and m2enable); the LCD coming on at odd moments (lcd_offset, */
+/*   display_startstate, enable_display); and what a speed switch does to the PPU and the timer (Gambatte's */
+/*   speedchange, AGE's spsw, and 194 DocBoy tests of LY after switching there and back). AGE's oam-read and */
+/*   lcd-align-ly fail in both their versions. */
+/* - Tests that lost to a majority: on a CGB C, four of Gambatte's results that passed before the edges above and */
+/*   SCY and SCX landing a dot early (16 came for them): lcd_offset's offset2_lyc98int_ly_count 1 and 3 and its */
+/*   offset1_lyc8fint_m1stat_ds_1, and enable_display's ly0_late_scx7_m3stat_scx0_2. Nothing on a CGB E. */
+/* - A game's palette write straight after start-up can be lost: the CGB is started where the DMG is (BOOT_DOT), */
+/*   which most likely puts such a write in mode 3. DocBoy's mode_cgb_flag tests fail for it, and its boot tests */
+/*   (21 of 68) measure where a CGB E's boot ROM really leaves things. */
+/* - Three of the shootout battery's CGB tests fail as either revision: cgb-acid-hell (which DocBoy's author says */
+/*   fails on a real CGB-E too), daid's ppu_scanline_bgp on a GBC and its speed_switch_timing_ly. They once passed */
+/*   with numbers fitted to them, which both revisions' evidence contradicts. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
 /* - A DMG's write to STAT doesn't switch all its interrupt sources on for a moment, as the real one's does. */
 /* - A window starting a pixel late (window_check) puts the LCD a pixel out of step with the PPU on some DMGs. It */
@@ -127,9 +147,10 @@ enum {
   M_CYCLE_DOT = 1,     /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
   DOT_PALETTES = 84,   /* CGB: palette RAM goes to the PPU, until 2 dots after the HBlank interrupt */
   PALETTES_KEPT = 2,
-  CGB_PALETTE_WRITE_LEAD = 1, /* CGB: dots before the end of the M-cycle that a write to BGP, OBP0 or OBP1 lands */
+  CGB_C_PALETTE_WRITE_LEAD = 1, /* dots before the end of the M-cycle that a write to BGP, OBP0 or OBP1 lands, */
+  CGB_E_PALETTE_WRITE_LEAD = 2, /* on a CGB C and on a CGB E */
   SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
-  SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands */
+  SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands, on any machine */
   DOCTOR_LY = 0x90,      /* Gameboy Doctor's logs were made with LY stuck here */
 };
 
@@ -516,6 +537,11 @@ static void hdma_start(uint8_t value) {
 /* **************************************** */
 /* STAT, and its interrupt */
 
+/* Where one line gives way to the next there are things a DMG shows for a dot or two: the LY=LYC flag dropping, */
+/* mode 0 at the start of line 0, LY reading 0 early in line 153. A CGB C shows them too, to a CPU at the normal */
+/* speed; one at double speed doesn't see them, and a CGB E hasn't got them. */
+static force_inline int dmg_edges(void) { return !cgb || (!cgb_e && !double_speed); }
+
 /* Compares LY with LYC, and works the interrupt line out again. With the LCD off nothing moves: the flag and the */
 /* line stay as they were, so a comparison that still holds when it comes back on doesn't interrupt again. */
 static void stat_update(void) {
@@ -530,8 +556,11 @@ static void stat_update(void) {
       stat |= STAT_LYC_EQUAL;
     }
   } else {
-    /* the flag drops between lines, though the interrupt line holds (a CGB from revision D keeps both) */
-    stat &= ~STAT_LYC_EQUAL;
+    /* Between lines the flag drops, though the interrupt line holds. A CGB E keeps both, and so does a CGB C as */
+    /* far as a CPU at double speed sees. */
+    if (dmg_edges()) {
+      stat &= ~STAT_LYC_EQUAL;
+    }
   }
   IO_REG(IO_STAT) = stat;
 
@@ -1041,7 +1070,7 @@ static void line_dot(void) {
       p.ly_compare = LY_NONE;
       p.irq_mode = IRQ_OAM;
       set_mode(MODE_HBLANK);
-    } else if (!cgb) {
+    } else if (dmg_edges()) {
       set_mode(MODE_HBLANK);
     }
     stat_update();
@@ -1101,20 +1130,27 @@ static void vblank_dot(void) {
     return;
   }
   if (p.line == LAST_LINE) {
-    if (!cgb) {
-      if (d == DOT_LAST_ZERO) {
-        IO_REG(IO_LY) = 0;
-        p.ly_compare = LAST_LINE;
-        stat_update();
-      } else if (d == DOT_LAST_NONE) {
-        p.ly_compare = LY_NONE;
-        stat_update();
-      }
-    } else if (d == DOT_VBLANK_COMPARE) {
+    /* A DMG has LY read 0 and starts comparing 153 together. A CGB compares from where any VBlank line does, and */
+    /* reads 0 two dots later than a DMG unless it shows a DMG's edges. Then all but a CGB E compare nothing for a */
+    /* while, before they compare 0. */
+    int zero_dot = DOT_LAST_ZERO;
+    int compare_dot = DOT_LAST_ZERO;
+    if (!dmg_edges()) {
+      zero_dot = DOT_LAST_NONE;
+    }
+    if (cgb) {
+      compare_dot = DOT_VBLANK_COMPARE;
+    }
+    if (d == zero_dot) {
+      IO_REG(IO_LY) = 0;
+    }
+    if (d == compare_dot) {
       p.ly_compare = LAST_LINE;
       stat_update();
-    } else if (d == DOT_LAST_NONE) {
-      IO_REG(IO_LY) = 0;
+    }
+    if (d == DOT_LAST_NONE && !cgb_e) {
+      p.ly_compare = LY_NONE;
+      stat_update();
     }
     if (d == DOT_LAST_COMPARE) {
       p.ly_compare = 0;
@@ -1426,11 +1462,12 @@ static int write_is_split(uint16_t address) {
 uint32_t video_write_lead(uint16_t address) {
   if (cgb) {
     if (address == IO_BGP || address == IO_OBP0 || address == IO_OBP1) {
-      return CGB_PALETTE_WRITE_LEAD;
+      if (cgb_e) {
+        return CGB_E_PALETTE_WRITE_LEAD;
+      }
+      return CGB_C_PALETTE_WRITE_LEAD;
     }
-    return 0;
-  }
-  if (write_is_split(address)) {
+  } else if (write_is_split(address)) {
     return SPLIT_WRITE_LEAD;
   }
   if (address == IO_SCY || address == IO_SCX) {
