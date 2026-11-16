@@ -80,8 +80,7 @@ int main(void) {
   CHECK(gb_read(gb, TIMA) == 3);
   CHECK(gb_read(gb, DIV) == SLOWEST_TICKS * 3 >> 8);
 
-  /* Past FF it starts again from TMA and asks for its interrupt. On the real thing that's an M-cycle late, so the */
-  /* check waits one out to hold either way. */
+  /* Past FF it reads 00 for an M-cycle, and only then starts again from TMA and asks for its interrupt. */
   gb_write(gb, TAC, TAC_FASTEST);
   gb_write(gb, DIV, 0);
   gb_write(gb, TMA, 0x42);
@@ -90,9 +89,29 @@ int main(void) {
   nops(gb, FASTEST_TICKS / NOP_TICKS - 1);
   CHECK(gb_read(gb, TIMA) == 0xFF);
   CHECK(!(gb_read(gb, IF) & IF_TIMER));
-  nops(gb, 2);
+  nops(gb, 1);
+  CHECK(gb_read(gb, TIMA) == 0x00);
+  CHECK(!(gb_read(gb, IF) & IF_TIMER));
+  nops(gb, 1);
   CHECK(gb_read(gb, TIMA) == 0x42);
   CHECK(gb_read(gb, IF) & IF_TIMER);
+  /* in that last M-cycle TMA is still going in, and a write to TIMA is lost */
+  gb_write(gb, TIMA, 0x99);
+  CHECK(gb_read(gb, TIMA) == 0x42);
+  gb_write(gb, TMA, 0x77);
+  CHECK(gb_read(gb, TIMA) == 0x77);
+
+  /* a write to TIMA in the M-cycle it reads 00 stays, and stops the load and the interrupt */
+  nops(gb, 1); /* out of the M-cycle of the load, where TIMA can't be written */
+  gb_write(gb, DIV, 0);
+  gb_write(gb, TIMA, 0xFF);
+  gb_write(gb, IF, 0);
+  nops(gb, FASTEST_TICKS / NOP_TICKS);
+  CHECK(gb_read(gb, TIMA) == 0x00);
+  gb_write(gb, TIMA, 0x10);
+  nops(gb, 1);
+  CHECK(gb_read(gb, TIMA) == 0x10);
+  CHECK(!(gb_read(gb, IF) & IF_TIMER));
 
   gb_destroy(gb);
   free(rom);

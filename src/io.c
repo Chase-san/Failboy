@@ -34,8 +34,9 @@ enum {
   DIV_SERIAL_BIT = 0x0100,    /* the internal serial clock shifts a bit on its falling edges: 8192 Hz */
   DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
   DIV_RARE_BITS = DIV_SERIAL_BIT | DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* any of those */
-  DIV_AFTER_BOOT = 0xABCC, /* where the DMG's boot ROM leaves the divider */
-  DIV_AFTER_DOUBLE = 4,    /* and where a CGB's starts again when it leaves double speed (to double, from 0) */
+  DIV_AFTER_BOOT = 0xABCC,  /* where the DMG's boot ROM leaves the divider */
+  DIV_AFTER_DOUBLE = 4,     /* and where a CGB's starts again when it leaves double speed (to double, from 0) */
+  TIMA_RELOAD_M_CYCLES = 1, /* M-cycles TIMA reads 00 for, past FF, before it's loaded from TMA */
   /* A CGB's boot ROM takes as long as the header makes it, so these are two games': an original Game Boy game (in */
   /* Mooneye's boot_div tests) and a color game (BullyGB's). */
   DIV_AFTER_COMPAT_BOOT = 0x2678,
@@ -95,6 +96,9 @@ static int dma_bus = BUS_EXTERNAL; /* the one dma_source is on */
 static int dma_next = DMA_IDLE;
 static uint16_t dma_restart = 0; /* the source written, starting when dma_starting runs out */
 static int dma_starting = 0;
+/* TIMA past FF: M-cycles until it's loaded from TMA, and whether this is the M-cycle that happened in */
+static uint8_t tima_reload = 0;
+static uint8_t tima_reloaded = 0;
 static int dma_fought = 0;          /* the CPU drove DMA's bus this M-cycle, */
 static uint8_t dma_fought_with = 0; /* with this */
 
@@ -114,6 +118,8 @@ void io_reset(void) {
   dma_restart = 0;
   dma_starting = 0;
   dma_fought = 0;
+  tima_reload = 0;
+  tima_reloaded = 0;
   joypad = 0;
 }
 
@@ -172,13 +178,24 @@ static int timer_signal(void) {
   return (tac & TAC_ENABLE) && ((div_counter >> tac_bit[tac & TAC_CLOCK]) & 1);
 }
 
-/* Call after anything that can move the timer signal (DIV ticking or reset, TAC writes). */
+/* Call after anything that can move the timer signal (DIV ticking or reset, TAC writes). When TIMA goes past FF it */
+/* reads 00 for an M-cycle; only then is it loaded from TMA and the interrupt asked for. Past FF by a write to DIV */
+/* or TAC, the M-cycle of the write is that M-cycle. */
 static void timer_update(int before) {
   if (before && !timer_signal()) {
     if (++IO_REG(IO_TIMA) == 0) {
-      IO_REG(IO_TIMA) = IO_REG(IO_TMA);
-      io_request(INT_TIMER);
+      tima_reload = TIMA_RELOAD_M_CYCLES;
     }
+  }
+}
+
+/* an M-cycle of the reload: counted down to it, and then for the one M-cycle it lasts */
+static void timer_cycle(void) {
+  tima_reloaded = 0;
+  if (tima_reload && --tima_reload == 0) {
+    IO_REG(IO_TIMA) = IO_REG(IO_TMA);
+    io_request(INT_TIMER);
+    tima_reloaded = 1;
   }
 }
 
@@ -344,6 +361,7 @@ static void dma_cycle(void) {
 
 void io_tick(uint32_t cycles) {
   for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
+    timer_cycle();
     div_set(div_counter + M_CYCLE);
     dma_cycle();
   }
@@ -431,6 +449,20 @@ void io_write(uint16_t address, uint8_t value) {
       break;
     case IO_DIV:
       div_set(0);
+      break;
+    case IO_TIMA:
+      /* in the M-cycle it's loaded from TMA a write is lost; in the one before, it stops the load and the interrupt */
+      if (!tima_reloaded) {
+        IO_REG(IO_TIMA) = value;
+        tima_reload = 0;
+      }
+      break;
+    case IO_TMA:
+      IO_REG(IO_TMA) = value;
+      /* TMA is still going into TIMA for the M-cycle of the load */
+      if (tima_reloaded) {
+        IO_REG(IO_TIMA) = value;
+      }
       break;
     case IO_TAC:
       before = timer_signal();
