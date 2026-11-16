@@ -326,6 +326,7 @@ uint32_t step(void) {
     return M_CYCLE >> double_speed;
   }
   uint64_t start = cycle_counter;
+  uint8_t speed = double_speed; /* which a STOP can change, once its own M-cycles have run */
   bus_cycles = 0;
   cpu_interrupt();
   if (halted) {
@@ -355,7 +356,7 @@ uint32_t step(void) {
   }
   bus_sync();
   /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
-  return cycles >> double_speed;
+  return cycles >> speed;
 }
 
 int cpu_bios_init(void) {

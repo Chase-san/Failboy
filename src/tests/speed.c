@@ -1,0 +1,139 @@
+/**
+ * This file is part of Failboy, a Gameboy Emulator
+ * Copyright (c) Robert Maupin <chasesan@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/* A Game Boy Color's speed switch: STOP with KEY1 armed stops the CPU for a while that isn't a whole number of its */
+/* M-cycles, restarts the divider, and can be cut short by an interrupt. The figures are the core's (cpu_instr.c), */
+/* which has them from other people's tests of the hardware; this is to notice them moving. */
+
+#include <stdlib.h>
+
+#include "tests/test.h"
+
+enum {
+  DIV = 0xFF04,
+  TIMA = 0xFF05,
+  TAC = 0xFF07,
+  IF = 0xFF0F,
+  KEY1 = 0xFF4D,
+  IE = 0xFFFF,
+  IF_TIMER = 0x04,
+  TAC_FASTEST = 0x05,
+  KEY1_ARMED = 0x01,
+  KEY1_NORMAL = 0x7E, /* as read: the unused bits set */
+  KEY1_DOUBLE = 0xFE,
+  M_CYCLE = 4,              /* ticks, at the normal speed */
+  STOP_M_CYCLES = 2,        /* the opcode and the byte after it */
+  TO_DOUBLE = 0x10002,      /* ticks the CPU waits going to double speed, */
+  TO_NORMAL = 0x20003,      /* and coming back */
+  DIV_PERIOD_M_CYCLES = 64, /* M-cycles of the CPU to a count of DIV, at either speed */
+  SECOND_STOP = 0x0200,     /* where the program's second STOP is */
+  THIRD_STOP = 0x0300,
+  STOP_SIZE = 2,
+};
+
+static const uint8_t first_switch[] = {
+    0x3E, KEY1_ARMED, /* LD A, 1 */
+    0xE0, 0x4D,       /* LDH (KEY1), A */
+    0x10, 0x00,       /* STOP */
+};
+
+static uint16_t pc(struct gb *gb) {
+  struct gb_cpu cpu;
+  gb_cpu(gb, &cpu);
+  return cpu.pc;
+}
+
+/* runs to where the CPU is about to fetch from an address, and says how many ticks that took */
+static uint64_t run_to(struct gb *gb, uint16_t address) {
+  uint64_t start = gb_ticks(gb);
+  while (pc(gb) != address) {
+    gb_step(gb);
+  }
+  return gb_ticks(gb) - start;
+}
+
+static void nops(struct gb *gb, int count) {
+  for (int i = 0; i < count; ++i) {
+    gb_step(gb);
+  }
+}
+
+int main(void) {
+  uint8_t *rom = test_rom(TEST_ROM_SIZE, 0, 0);
+  rom[TEST_HEADER_CGB] = TEST_HEADER_CGB_GAME;
+  test_program(rom, first_switch, sizeof(first_switch));
+  rom[SECOND_STOP] = 0x10;
+  rom[THIRD_STOP] = 0x10;
+  struct gb *gb = test_boot(GB_CGB_AUTO, rom, TEST_ROM_SIZE, NULL);
+  CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
+
+  /* to double speed: the STOP at the normal speed, then the wait */
+  uint16_t stop = TEST_PROGRAM + sizeof(first_switch) - STOP_SIZE;
+  run_to(gb, stop);
+  CHECK(run_to(gb, stop + STOP_SIZE) == STOP_M_CYCLES * M_CYCLE);
+  CHECK(gb_read(gb, KEY1) == KEY1_DOUBLE);
+  uint64_t before = gb_ticks(gb);
+  gb_step(gb); /* nothing moves the PC until the wait is over, so step it out */
+  while (pc(gb) == stop + STOP_SIZE) {
+    gb_step(gb);
+  }
+  /* the wait, and the NOP after it, which takes half the ticks now */
+  CHECK(gb_ticks(gb) - before == TO_DOUBLE + M_CYCLE / 2);
+  CHECK(gb_read(gb, DIV) == 0);
+  nops(gb, DIV_PERIOD_M_CYCLES - 3);
+  CHECK(gb_read(gb, DIV) == 0);
+  nops(gb, 1);
+  CHECK(gb_read(gb, DIV) == 1);
+
+  /* and back: the STOP at double speed, then a wait twice as long */
+  run_to(gb, SECOND_STOP - 1);
+  gb_write(gb, KEY1, KEY1_ARMED);
+  nops(gb, 1);
+  CHECK(run_to(gb, SECOND_STOP + STOP_SIZE) == STOP_M_CYCLES * M_CYCLE / 2);
+  CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
+  before = gb_ticks(gb);
+  gb_step(gb);
+  while (pc(gb) == SECOND_STOP + STOP_SIZE) {
+    gb_step(gb);
+  }
+  CHECK(gb_ticks(gb) - before == TO_NORMAL + M_CYCLE);
+  CHECK(gb_read(gb, DIV) == 0);
+  nops(gb, DIV_PERIOD_M_CYCLES - 3);
+  CHECK(gb_read(gb, DIV) == 0);
+  nops(gb, 1);
+  CHECK(gb_read(gb, DIV) == 1);
+
+  /* an interrupt that comes up during the wait ends it, with the speed switched all the same */
+  run_to(gb, THIRD_STOP - 1);
+  gb_write(gb, KEY1, KEY1_ARMED);
+  gb_write(gb, IF, 0);
+  gb_write(gb, IE, IF_TIMER);
+  gb_write(gb, TIMA, 0);
+  gb_write(gb, TAC, TAC_FASTEST);
+  nops(gb, 1);
+  run_to(gb, THIRD_STOP + STOP_SIZE);
+  before = gb_ticks(gb);
+  gb_step(gb);
+  while (pc(gb) == THIRD_STOP + STOP_SIZE) {
+    gb_step(gb);
+  }
+  CHECK(gb_ticks(gb) - before < TO_DOUBLE / 4);
+  CHECK(gb_read(gb, IF) & IF_TIMER);
+  CHECK(gb_read(gb, KEY1) == KEY1_DOUBLE);
+
+  gb_destroy(gb);
+  free(rom);
+  return test_result("speed");
+}
