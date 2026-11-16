@@ -26,11 +26,11 @@ typedef void (*write_f)(uint16_t, uint8_t);
 
 /* cart.c */
 void cart_load(const char *);
-void cart_free();
+void cart_free(void);
 
 /* mem.c */
-void mem_alloc();
-void mem_free();
+void mem_alloc(void);
+void mem_free(void);
 
 extern uint8_t *oam;
 extern uint8_t *vram;
@@ -96,7 +96,7 @@ extern uint32_t cycle_counter;
 #define rpc8() (read(r.PC++))
 #define rpc16() ((rpc8()) | (rpc8() << 8))
 
-void cpu_bios_init();
-void step();
+void cpu_bios_init(void);
+void step(void);
 
 #endif /* _FAILBOY_H_ */

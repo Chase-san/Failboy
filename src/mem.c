@@ -43,7 +43,7 @@ static uint8_t *hram;
 uint8_t *oam;
 uint8_t *vram;
 
-void mem_alloc() {
+void mem_alloc(void) {
 	/* 8 kB Working Ram */
 	wram = malloc(0x2000);
 	hram = malloc(127);
@@ -51,7 +51,7 @@ void mem_alloc() {
 	vram = malloc(0x2000);
 }
 
-void mem_free() {
+void mem_free(void) {
 	free(vram);
 	free(oam);
 	free(hram);

@@ -104,7 +104,7 @@ void mbc1_1_write(uint16_t address, uint8_t value) {
 	}
 }
 
-void cart_mem_reset() {
+void cart_mem_reset(void) {
 	ext0_read_f = ext1_read_f = ext2_read_f = nil_read;
 	ext0_write_f = ext1_write_f = ext2_write_f = nil_write;
 	rom_bank = 1;
@@ -134,7 +134,7 @@ void cart_load(const char *filename) {
 	}
 }
 
-void cart_free() {
+void cart_free(void) {
 	if(rom != NULL) {
 		free(rom);
 	}

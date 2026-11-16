@@ -17,15 +17,15 @@
 #include "cpu_instr.h"
 #include "cpu_instr_cb.h"
 
-typedef void (*instruction_f)();
+typedef void (*instruction_f)(void);
 typedef void (*instruction_cb_f)(uint8_t);
 
 struct registers r;
 
 uint32_t cycle_counter = 0;
 
-void NOP() { }
-void XXX() { /* missing opcode */ }
+void NOP(void) { }
+void XXX(void) { /* missing opcode */ }
 
 static const instruction_f instr_cb_map[64] = {
 	RLC_B, RLC_C, RLC_D, RLC_E, RLC_H, RLC_L, RLC_aHL, RLCA,	/* 00-07 */
@@ -67,7 +67,7 @@ static const uint8_t instr_cb_timing[256] = {
 	2,2,2,2,2,2,4,2,2,2,2,2,2,2,4,2
 };
 
-static inline void step_cb() {
+static inline void step_cb(void) {
 	uint8_t op = rpc8();
 	if(op < 0x40) {
 		instr_cb_map[op]();
@@ -144,13 +144,13 @@ static const uint8_t instr_timing[256] = {
 	3,3,2,1,0,4,2,4,3,2,4,1,0,0,2,4
 };
 
-void step() {
+void step(void) {
 	uint8_t op = rpc8();
 	instr_map[op]();
 	cycle_counter += instr_timing[op] << 2;
 }
 
-void cpu_bios_init() {
+void cpu_bios_init(void) {
 	/*
 	0x1 - Gameboy/Super Gameboy
 	0x11 - Gameboy Color

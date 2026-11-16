@@ -14,7 +14,6 @@
  */
 
 #include "failboy.h"
-#include "files.h"
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
