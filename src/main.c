@@ -13,18 +13,19 @@
  * GNU General Public License for more details.
  */
 
-#include "failboy.h"
 #include <stdio.h>
 
+#include "failboy.h"
+
 int main(int argc, char *argv[]) {
-	cart_load("tests/cpu_instrs.gb");
-	mem_alloc();
-	cpu_bios_init();
-	for(uint32_t i = 0; i < 28000000; ++i) {
-		step();
-	}
-	printf("\n\nEND OF LINE\n");
-	mem_free();
-	cart_free();
-	return 0;
+  cart_load("tests/cpu_instrs.gb");
+  mem_alloc();
+  cpu_bios_init();
+  for (uint32_t i = 0; i < 28000000; ++i) {
+    step();
+  }
+  printf("\n\nEND OF LINE\n");
+  mem_free();
+  cart_free();
+  return 0;
 }

@@ -1,0 +1,19 @@
+---
+Language: C
+BasedOnStyle: Google
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: Empty
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+ColumnLimit: 80
+FixNamespaceComments: true
+IndentWidth: 2
+MaxEmptyLinesToKeep: 1
+PointerAlignment: Right
+SeparateDefinitionBlocks: Always
+SpaceAfterCStyleCast: false
+UseTab: Never

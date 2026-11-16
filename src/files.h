@@ -29,55 +29,51 @@
 #ifdef __cplusplus
 /* Not sure why you would want to use this in C++, but just in case. */
 extern "C" {
-#define __songbird_header_inline__	inline
+#define __songbird_header_inline__ inline
 /* Works even if __STDC_VERSION__ is not defined. */
 #elif __STDC_VERSION__ <= 199409L
-#define __songbird_header_inline__	static __inline__
+#define __songbird_header_inline__ static __inline__
 #else
-#define __songbird_header_inline__	static inline
+#define __songbird_header_inline__ static inline
 #endif
 
-__songbird_header_inline__	unsigned sb_file_size(char const *);
-__songbird_header_inline__	void *sb_file_load(char const *, unsigned const);
-__songbird_header_inline__	void *sb_file_load2(char const *, unsigned *);
-__songbird_header_inline__	void sb_file_write(char const *, void const *, unsigned const);
+__songbird_header_inline__ unsigned sb_file_size(char const *);
+__songbird_header_inline__ void *sb_file_load(char const *, unsigned const);
+__songbird_header_inline__ void *sb_file_load2(char const *, unsigned *);
+__songbird_header_inline__ void sb_file_write(char const *, void const *, unsigned const);
 
-__songbird_header_inline__
-unsigned sb_file_size(char const *filename) {
-	FILE *f;
-	unsigned size;
-	/* TODO determine if STAT exists somehow. So we have the option of faster ways to do this. */
-	/* This method itself isn't exactly cross platform either. But it `usually` works. */
-	f = fopen(filename, "rb");
-	fseek(f, 0, SEEK_END);
-	size = ftell(f);
-	fclose(f);
-	return size;
+__songbird_header_inline__ unsigned sb_file_size(char const *filename) {
+  FILE *f;
+  unsigned size;
+  /* TODO determine if STAT exists somehow. So we have the option of faster ways to do this. */
+  /* This method itself isn't exactly cross platform either. But it `usually` works. */
+  f = fopen(filename, "rb");
+  fseek(f, 0, SEEK_END);
+  size = ftell(f);
+  fclose(f);
+  return size;
 }
 
-__songbird_header_inline__
-void *sb_file_load(char const *filename, unsigned const size) {
-	FILE *f;
-	void *ptr;
-	ptr = sb_malloc(size);
-	f = fopen(filename, "rb");
-	fread(ptr, size, 1, f);
-	fclose(f);
-	return ptr;
+__songbird_header_inline__ void *sb_file_load(char const *filename, unsigned const size) {
+  FILE *f;
+  void *ptr;
+  ptr = sb_malloc(size);
+  f = fopen(filename, "rb");
+  fread(ptr, size, 1, f);
+  fclose(f);
+  return ptr;
 }
 
-__songbird_header_inline__
-void *sb_file_load2(char const *filename, unsigned *size) {
-	*size = sb_file_size(filename);
-	return sb_file_load(filename, *size);
+__songbird_header_inline__ void *sb_file_load2(char const *filename, unsigned *size) {
+  *size = sb_file_size(filename);
+  return sb_file_load(filename, *size);
 }
 
-__songbird_header_inline__
-void sb_file_write(char const *filename, void const *ptr, unsigned const size) {
-	FILE *f;
-	f = fopen(filename, "wb");
-	fwrite(ptr, size, 1, f);
-	fclose(f);
+__songbird_header_inline__ void sb_file_write(char const *filename, void const *ptr, unsigned const size) {
+  FILE *f;
+  f = fopen(filename, "wb");
+  fwrite(ptr, size, 1, f);
+  fclose(f);
 }
 
 #undef __songbird_header_inline__

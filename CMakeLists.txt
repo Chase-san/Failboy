@@ -17,7 +17,7 @@ set(SRC_FILES
   src/cpu.c
   src/io.c
   src/mem.c
-  src/video.c
+  src/ppu.c
 )
 
 add_executable(${PROJECT_NAME} src/main.c ${SRC_FILES})
