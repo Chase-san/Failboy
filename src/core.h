@@ -49,8 +49,9 @@ enum {
 /* gb.c */
 extern int doctor; /* being as Gameboy Doctor's logs expect */
 
-extern int revision; /* the machine emulated: a gb_hardware */
-extern uint8_t cgb;  /* it's a Game Boy Color */
+extern int revision;  /* the machine emulated: a gb_hardware */
+extern uint8_t cgb;   /* it's a Game Boy Color */
+extern uint8_t cgb_e; /* and its CPU is a CGB E, not a CGB C */
 extern uint8_t
     cgb_mode; /* and running a color game, so all it adds is switched on; if not, it's in compatibility mode */
 

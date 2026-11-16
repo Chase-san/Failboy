@@ -46,12 +46,14 @@ enum {
 };
 
 /* The machine to be. A host picks the console, and the core picks which revision of it to be (they don't all */
-/* behave alike): the usual one, which gb_hardware() tells. More consoles, and asking for an exact revision, will */
-/* come as the core learns to be them. */
+/* behave alike): the usual one, which gb_hardware() tells. Or the host asks for an exact revision, of those the */
+/* core can be. More consoles and revisions will come as the core learns to be them. */
 enum gb_revision {
   GB_AUTO,     /* what the cartridge's header asks for: GB_CGB_AUTO for a color game, GB_DMG_AUTO for any other */
   GB_DMG_AUTO, /* the original Game Boy */
   GB_CGB_AUTO, /* Game Boy Color, which runs an original Game Boy's game in its compatibility mode */
+  GB_CGB_C,    /* a Game Boy Color with a CPU CGB C */
+  GB_CGB_E,    /* a Game Boy Color with a CPU CGB E, the last and the commonest */
   GB_REVISIONS,
 };
 
@@ -61,6 +63,7 @@ enum gb_revision {
 enum gb_hardware {
   GB_HARDWARE_DMG_B = 0x02, /* the original Game Boy, whose CPUs were 0, A, B and C */
   GB_HARDWARE_CGB_C = 0x43, /* Game Boy Color: 0, then A to E */
+  GB_HARDWARE_CGB_E = 0x45,
 };
 
 enum {

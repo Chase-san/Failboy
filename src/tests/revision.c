@@ -45,12 +45,19 @@ int main(void) {
   /* the console is the high nibble */
   CHECK((GB_HARDWARE_DMG_B & GB_CONSOLE) == GB_CONSOLE_DMG);
   CHECK((GB_HARDWARE_CGB_C & GB_CONSOLE) == GB_CONSOLE_CGB);
+  CHECK((GB_HARDWARE_CGB_E & GB_CONSOLE) == GB_CONSOLE_CGB);
 
+  /* left to the core, a Game Boy Color is the last revision */
   test_choice(GB_AUTO, 0, GB_HARDWARE_DMG_B, 0);
-  test_choice(GB_AUTO, 1, GB_HARDWARE_CGB_C, 1);
+  test_choice(GB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
   test_choice(GB_DMG_AUTO, 0, GB_HARDWARE_DMG_B, 0);
   test_choice(GB_DMG_AUTO, 1, GB_HARDWARE_DMG_B, 0); /* a color game that also runs on the original */
-  test_choice(GB_CGB_AUTO, 1, GB_HARDWARE_CGB_C, 1);
-  test_choice(GB_CGB_AUTO, 0, GB_HARDWARE_CGB_C, 0); /* compatibility mode */
+  test_choice(GB_CGB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
+  test_choice(GB_CGB_AUTO, 0, GB_HARDWARE_CGB_E, 0); /* compatibility mode */
+  /* an exact revision is the one asked for, whatever the game */
+  test_choice(GB_CGB_C, 1, GB_HARDWARE_CGB_C, 1);
+  test_choice(GB_CGB_C, 0, GB_HARDWARE_CGB_C, 0);
+  test_choice(GB_CGB_E, 1, GB_HARDWARE_CGB_E, 1);
+  test_choice(GB_CGB_E, 0, GB_HARDWARE_CGB_E, 0);
   return test_result("revision");
 }

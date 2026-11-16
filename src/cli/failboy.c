@@ -78,10 +78,12 @@ static const struct {
   const char *name;
   enum gb_revision revision;
 } modes[] = {
-    {"auto", GB_AUTO},
-    {"dmg", GB_DMG_AUTO},
-    {"cgb", GB_CGB_AUTO},
-    {"cgbfb", GB_CGB_AUTO}, /* once a mode of its own; a cgb falls back by itself now */
+    {"auto", GB_AUTO},       //
+    {"dmg", GB_DMG_AUTO},    //
+    {"cgb", GB_CGB_AUTO},    //
+    {"cgbc", GB_CGB_C},      //
+    {"cgbe", GB_CGB_E},      //
+    {"cgbfb", GB_CGB_AUTO},  // once a mode of its own; a cgb falls back by itself now
 };
 
 /* --doctor: a Gameboy Doctor trace on stdout, which moves serial output to stderr */
@@ -118,6 +120,8 @@ static int usage(const char *name) {
   fprintf(stderr, "         auto  select based on the game\n");
   fprintf(stderr, "         dmg   original gameboy\n");
   fprintf(stderr, "         cgb   color gameboy, which runs an original gameboy game in its fallback mode\n");
+  fprintf(stderr, "         cgbc  color gameboy with a CPU CGB C\n");
+  fprintf(stderr, "         cgbe  color gameboy with a CPU CGB E, which is what cgb gives\n");
   fprintf(stderr, "         sgb   super gameboy (unimplemented)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
