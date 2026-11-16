@@ -21,7 +21,9 @@
 /* beside them. Where it's known to differ from the hardware: */
 /* - The channel timing is the one both of the core's CGBs and its DMG use. SameSuite's notes say a CPU CGB C reads */
 /*   a glitched amplitude from PCM12 and PCM34 in the M-cycle a square or the noise changes, which isn't understood */
-/*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. */
+/*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. A */
+/*   real one bears that out: on a CGB-CPU-04, channel_1_align shows seven of its 48 samples wrong (00 for 08, one */
+/*   where the level rises with the trigger aligned one way, three with it the other), and on a CGB-CPU-05 none. */
 /* - What a write to NRx2 does to a playing channel's volume is a CPU CGB D's and E's. A DMG's differs, and the */
 /*   core's DMG leaves the volume alone. */
 /* - Of SameSuite's APU tests, these fail: channel_1_sweep_restart_2 (which its notes say a CPU CGB D fails too), */
