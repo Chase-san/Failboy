@@ -27,10 +27,10 @@
 /* places below. Nobody here can measure either, so each is held to other people's tests of it, and where those */
 /* disagree about one revision, the reading that passes more of them is the one kept: */
 /* - A CGB C to Gambatte's hwtests (taken to be from a CGB-CPU-04), AGE's tests named for B and C, and mealybug's */
-/*   CGB-C pictures: 2244 of Gambatte's 3023 CGB results, 20 of AGE's 37, 7 of mealybug's 27 (2026-11-15). */
+/*   CGB-C pictures: 2257 of Gambatte's 3023 CGB results, 20 of AGE's 37, 7 of mealybug's 27 (2026-11-15). */
 /* - A CGB E to DocBoy's test suite (whose CGB matches mealybug's CGB-D pictures wherever those differ from the */
 /*   CGB-C ones, and whose author writes of a real CGB-E), AGE's tests named for E, and mealybug's CGB-D pictures, D */
-/*   and E being taken as one: 1049 of the 2130 DocBoy tests that aren't of sound and 313 of 607 with a DMG game */
+/*   and E being taken as one: 1066 of the 2130 DocBoy tests that aren't of sound and 314 of 607 with a DMG game */
 /*   in, 19 of AGE's 37, 6 of mealybug's 20. That DocBoy's results are from that hardware is its author's word, */
 /*   in one comment; its README doesn't say. */
 /* A test of one revision is applied to the other too, unless the other's own tests say otherwise. What every CGB */
@@ -68,7 +68,7 @@
 /*   picture from a DMG-CPU B. */
 /* - The window at WX 166 only moves its line counter (DMG); the real one's is said to start during HBlank. WY is */
 /*   compared twice a line (as the pixels start, and near the line's end), where the hardware may do it more often. */
-/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1368 of 1651, and 10 of 14): some of the */
+/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1370 of 1651, and 10 of 14): some of the */
 /*   window's and mode 1's cases, AGE's m3-bg-scx picture and a 2-pixel difference in its m3-bg-bgp, and its */
 /*   stat-mode-sprites and oam-write. */
 /* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
