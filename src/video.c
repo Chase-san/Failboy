@@ -58,9 +58,6 @@
 /* - Tests that lost to a majority: on a CGB C, four of Gambatte's results that passed before the edges above and */
 /*   SCY and SCX landing a dot early (16 came for them): lcd_offset's offset2_lyc98int_ly_count 1 and 3 and its */
 /*   offset1_lyc8fint_m1stat_ds_1, and enable_display's ly0_late_scx7_m3stat_scx0_2. Nothing on a CGB E. */
-/* - A game's palette write straight after start-up can be lost: the CGB is started where the DMG is (BOOT_DOT), */
-/*   which most likely puts such a write in mode 3. DocBoy's mode_cgb_flag tests fail for it, and its boot tests */
-/*   (21 of 68) measure where a CGB E's boot ROM really leaves things. */
 /* - Three of the shootout battery's CGB tests fail as either revision: cgb-acid-hell (which DocBoy's author says */
 /*   fails on a real CGB-E too), daid's ppu_scanline_bgp on a GBC and its speed_switch_timing_ly. They once passed */
 /*   with numbers fitted to them, which both revisions' evidence contradicts. */
@@ -83,8 +80,10 @@
 /* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
 /* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
 /*   at once. */
-/* - Where the boot ROM leaves the PPU (BOOT_DOT, in line 0's OAM scan) is taken, not measured; a real DMG's is said */
-/*   to hand over in VBlank. */
+/* - Where the boot ROM leaves the PPU (BOOT_LINE_DMG and the rest) is worked out from tests that read STAT and LY */
+/*   a counted number of M-cycles after start-up: DocBoy's boot tests, with which Gambatte's display_startstate */
+/*   results agree, for a DMG and for both CGBs. The other state it leaves isn't: on a CGB most of DocBoy's boot */
+/*   tests still fail (the timer by the game's title, the colors given to a DMG game, HRAM, sound). */
 /* - A line with more to fetch than there's time for is cut off at its end, rather than running into the next. */
 /* - Outside this file: a halted CPU's look for interrupts halfway through an M-cycle (halt_cycle, cpu.c) is what */
 /*   Mooneye's hblank_ly_scx_timing wants of a DMG, and is done the same on a CGB and at double speed; and the wait */
@@ -141,11 +140,14 @@ enum {
   DOT_LAST_COMPARE = 9, /* and then as 0 */
   NO_DOT = 0xFFFF,
   LAST_LINE = LCD_LINES - 1,
-  FIRST_LINE_DOT = 5,  /* where the line is as the M-cycle of the write that switched the LCD on ends */
-  FIRST_LINE_LATE = 2, /* dots late that line's drawing is */
-  BOOT_DOT = 5,        /* where the boot ROM is taken to leave line 0 */
-  M_CYCLE_DOT = 1,     /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
-  DOT_PALETTES = 84,   /* CGB: palette RAM goes to the PPU, until 2 dots after the HBlank interrupt */
+  FIRST_LINE_DOT = 5,        /* where the line is as the M-cycle of the write that switched the LCD on ends */
+  FIRST_LINE_LATE = 2,       /* dots late that line's drawing is */
+  BOOT_LINE_DMG = LAST_LINE, /* where the boot ROM leaves the PPU: a DMG's, 14 M-cycles before line 0, */
+  BOOT_DOT_DMG = 401,
+  BOOT_LINE_CGB = LCD_HEIGHT, /* and a CGB's */
+  BOOT_DOT_CGB = 169,
+  M_CYCLE_DOT = 1,   /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
+  DOT_PALETTES = 84, /* CGB: palette RAM goes to the PPU, until 2 dots after the HBlank interrupt */
   PALETTES_KEPT = 2,
   CGB_C_PALETTE_WRITE_LEAD = 1, /* dots before the end of the M-cycle that a write to BGP, OBP0 or OBP1 lands, */
   CGB_E_PALETTE_WRITE_LEAD = 2, /* on a CGB C and on a CGB E */
@@ -1310,14 +1312,21 @@ void video_reset(void) {
   p.window_line = WINDOW_LINE_NONE;
 }
 
-/* The screen as the boot ROM leaves it, with the LCD on and a little way into the OAM scan of a line 0. */
+/* The screen as the boot ROM leaves it, with the LCD on and in VBlank: a DMG near the end of its last line, where */
+/* LY already reads 0, and a CGB a third of the way along its first. */
 void video_bios_init(void) {
   IO_REG(IO_LCDC) = LCDC_ENABLE;
-  IO_REG(IO_STAT) = MODE_OAM_SCAN;
-  p.dot = BOOT_DOT;
-  p.ly_compare = 0;
-  p.oam_read_locked = 1;
-  p.oam_write_locked = 1;
+  IO_REG(IO_STAT) = MODE_VBLANK;
+  p.irq_mode = IRQ_VBLANK;
+  p.line = BOOT_LINE_DMG;
+  p.dot = BOOT_DOT_DMG;
+  if (cgb) {
+    p.line = BOOT_LINE_CGB;
+    p.dot = BOOT_DOT_CGB;
+    IO_REG(IO_LY) = BOOT_LINE_CGB;
+  }
+  p.ly_compare = IO_REG(IO_LY);
+  stat_update();
   if (!cgb) {
     load_logo();
     return;
