@@ -71,8 +71,9 @@ static void run_machine(uint32_t cycles) {
 /* Each of the CPU's reads and writes takes an M-cycle, which the rest of the machine runs through after the access. */
 /* One that collides with OAM DMA doesn't get through: a read gets what DMA has on the bus, a write goes nowhere. */
 /* CGB: VRAM DMA takes the bus between two of the CPU's instructions, not while it's halted, and the CPU stands */
-/* still for an M-cycle and then while it copies, 2 T-cycles of the normal speed a byte: a block of 16 bytes is 9 */
-/* M-cycles at the normal speed and 17 at double. DocBoy's hdma tests have their timers and HDMA5 show all of that. */
+/* still while it copies, 2 T-cycles of the normal speed a byte, and for an M-cycle after: a block of 16 bytes is 9 */
+/* M-cycles at the normal speed and 17 at double. DocBoy's hdma tests have their timers and HDMA5 show how long it */
+/* is; that the odd M-cycle comes last is from its tests of a copy running into the PPU's drawing (video.c). */
 static void bus_dma(void) {
   if (!cgb) {
     return;
@@ -83,19 +84,21 @@ static void bus_dma(void) {
   }
   uint32_t cycles = M_CYCLE;
   video_dma_begin(mem_read(r.PC));
-  run_machine(M_CYCLE);
   while (video_dma_pending()) {
-    bus_sync();
-    video_dma_byte();
+    /* two bytes to an M-cycle at the normal speed, the first with the PPU halfway through it */
     run_machine(M_CYCLE);
     cycles += M_CYCLE;
-    if (!double_speed && video_dma_pending()) {
-      /* two bytes to an M-cycle at the normal speed: the second with the PPU halfway through it */
+    if (!double_speed) {
       video_tick(video_owed / 2);
       video_owed -= video_owed / 2;
       video_dma_byte();
     }
+    bus_sync();
+    if (video_dma_pending()) {
+      video_dma_byte();
+    }
   }
+  run_machine(M_CYCLE);
   cycle_counter += cycles;
   bus_cycles += cycles;
 }

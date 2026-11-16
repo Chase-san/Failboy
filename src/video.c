@@ -81,11 +81,13 @@
 /*   half of the M-cycle it is, is a guess. Gambatte's oamdma results mostly fail, on either machine. */
 /* - VRAM DMA stops the CPU between two instructions and copies a byte every 2 dots (bus_dma, cpu.c), an HBlank */
 /*   copy's block asked for a dot after the HBlank interrupt; that much DocBoy's timing tests and Gambatte's dma */
-/*   results agree on. What isn't done: a copy that runs into the drawing loses every byte, where the hardware lets */
-/*   one in four through between the fetcher's reads (83 DocBoy tests); OAM DMA running at the same time isn't */
-/*   allowed for (31); the first byte of a copy that can't read its source is the next opcode, which isn't right */
-/*   when the code is running from RAM; and a block that comes due while the CPU is halted waits for it to wake */
-/*   and goes after the instruction that follows, which the tests are split on. */
+/*   results agree on. A copy that runs into the drawing gets a byte in where the PPU isn't reading VRAM itself */
+/*   (vram_fetching()), which is fitted to DocBoy's 83 tests of it (82 pass) by lining the bytes up against this */
+/*   file's fetcher: when in its 2 dots a byte is written, and which of the fetcher's steps are reads, are what */
+/*   made the patterns match, not known. What isn't done: OAM DMA running at the same time (31 tests); the first */
+/*   byte of a copy that can't read its source is the next opcode, which isn't right when the code is running */
+/*   from RAM; and a block that comes due while the CPU is halted waits for it to wake and goes after the */
+/*   instruction that follows, which the tests are split on. */
 /* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
 /* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
 /*   at once. */
@@ -534,13 +536,28 @@ void video_dma_begin(uint8_t bus) {
   p.hdma_bus = bus;
 }
 
+/* Whether the PPU is reading VRAM itself just now, which keeps a copy's byte out. While it draws it reads for six */
+/* dots of the background fetcher's eight, and the byte gets in during the two the fetcher waits to push; and it */
+/* reads an object's two rows of bits, the fetcher still waiting, for the four dots that takes. Before the first */
+/* pixel and after the last, VRAM is the copy's. */
+static int vram_fetching(void) {
+  if (!p.drawing) {
+    return 0;
+  }
+  if (p.fetch_step != FETCH_PUSH) {
+    return 1;
+  }
+  if (p.obj_step == OBJ_LOW) {
+    return p.obj_wait < OBJ_SETTLE_DOTS;
+  }
+  return p.obj_step == OBJ_LAST || p.obj_step == OBJ_HIGH;
+}
+
 /* a byte of the copy, the CPU being stopped for it */
 void video_dma_byte(void) {
   uint8_t value = hdma_read();
   p.hdma_first = 0;
-  /* lost while the PPU has VRAM, which is rougher than the hardware: there, one byte in four gets in between the */
-  /* fetcher's reads */
-  if (!p.vram_write_locked) {
+  if (!vram_fetching()) {
     vram_write(VRAM_START + (p.hdma_dest & (VRAM_SIZE - 1)), value);
   }
   ++p.hdma_source;
