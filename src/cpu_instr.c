@@ -792,10 +792,13 @@ void HALT(void) {
 }
 
 enum {
-  /* T-cycles at the normal speed that a speed switch stops the CPU for, the rest of the machine running on: a */
-  /* little over 2^17 at the double speed. The length was fitted to daid's speed_switch_timing tests; most of */
-  /* Gambatte's speedchange results for a CGB-C, and AGE's spsw tests, say there's more to it. Nothing cuts it short. */
-  SPEED_SWITCH_CYCLES = 0x10004,
+  /* T-cycles of the normal speed that a speed switch stops the CPU for, the rest of the machine running on (the */
+  /* divider and timer at the new speed): about 2^17 of the CPU's own cycles at the speed it's leaving, so twice as */
+  /* long coming back from double as going to it. The exact figures are what DocBoy's tests of a CGB E, Gambatte's */
+  /* speedchange results for a CGB C and AGE's spsw tests agree on most, tried a T-cycle at a time; neither is a */
+  /* whole number of M-cycles. An interrupt cuts the wait short (step(), cpu.c). */
+  SPEED_SWITCH_TO_DOUBLE = 0x10002,
+  SPEED_SWITCH_TO_NORMAL = 0x20003,
 };
 
 void STOP(void) {
@@ -803,8 +806,11 @@ void STOP(void) {
   bus_idle();
   bus_sync();
   if (io_speed_switch()) {
-    /* the CPU stands still while the clock settles, for as long at either speed */
-    cpu_paused = (SPEED_SWITCH_CYCLES << double_speed) / M_CYCLE;
+    /* the CPU stands still while the clock settles */
+    cpu_paused = SPEED_SWITCH_TO_NORMAL;
+    if (double_speed) {
+      cpu_paused = SPEED_SWITCH_TO_DOUBLE;
+    }
     return;
   }
   /* The clock stops, and with it DIV (reset), the PPU and the screen, until a button is pressed (see io_joypad). */

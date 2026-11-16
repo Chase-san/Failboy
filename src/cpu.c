@@ -31,7 +31,7 @@ uint8_t halt_bug = 0;     /* PC won't move past the next opcode (see HALT) */
 uint8_t stopped = 0;      /* by STOP, until a button is pressed */
 uint8_t double_speed = 0; /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
 uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
-uint32_t cpu_paused = 0;  /* CGB: M-cycles the CPU has still to sit out after switching speed */
+uint32_t cpu_paused = 0;  /* CGB: T-cycles of the normal speed the CPU has still to sit out after switching speed */
 
 /* T-cycles of the current step the bus has already run */
 static uint32_t bus_cycles = 0;
@@ -295,11 +295,31 @@ uint32_t step(void) {
     cycle_counter += M_CYCLE;
     return M_CYCLE;
   }
-  if (cpu_locked || cpu_paused) {
-    /* the CPU is hung, or waiting out a speed switch, and the rest of the machine carries on without it */
-    if (cpu_paused) {
-      --cpu_paused;
+  if (cpu_paused && (IO_REG(IO_IF) & io_ie & INT_ALL)) {
+    /* an interrupt cuts the wait after a speed switch short, as it ends a HALT */
+    cpu_paused = 0;
+  }
+  if (cpu_paused) {
+    /* Waiting out a speed switch, an M-cycle at a time, the rest of the machine carrying on without the CPU. The */
+    /* wait isn't a whole number of M-cycles, so the last is a short one, and leaves the CPU's M-cycles on other */
+    /* dots of the PPU's lines than before. */
+    uint32_t dots = M_CYCLE >> double_speed;
+    if (dots > cpu_paused) {
+      dots = cpu_paused;
     }
+    cpu_paused -= dots;
+    bus_sync();
+    io_tick(dots << double_speed);
+    audio_tick(dots);
+    if (!doctor) {
+      video_owed += dots;
+    }
+    bus_sync();
+    cycle_counter += dots << double_speed;
+    return dots;
+  }
+  if (cpu_locked) {
+    /* the CPU is hung, and the rest of the machine carries on without it */
     run_machine(M_CYCLE);
     bus_sync();
     cycle_counter += M_CYCLE;

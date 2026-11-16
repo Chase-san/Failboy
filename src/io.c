@@ -35,6 +35,7 @@ enum {
   DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
   DIV_RARE_BITS = DIV_SERIAL_BIT | DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* any of those */
   DIV_AFTER_BOOT = 0xABCC, /* where the DMG's boot ROM leaves the divider */
+  DIV_AFTER_DOUBLE = 4,    /* and where a CGB's starts again when it leaves double speed (to double, from 0) */
   /* A CGB's boot ROM takes as long as the header makes it, so these are two games': an original Game Boy game (in */
   /* Mooneye's boot_div tests) and a color game (BullyGB's). */
   DIV_AFTER_COMPAT_BOOT = 0x2678,
@@ -212,7 +213,12 @@ int io_speed_switch(void) {
   }
   double_speed = !double_speed;
   IO_REG(IO_KEY1) = 0;
-  div_set(0);
+  /* the divider starts again, an M-cycle of the double speed on when that's the speed left */
+  if (double_speed) {
+    div_set(0);
+  } else {
+    div_set(DIV_AFTER_DOUBLE);
+  }
   return 1;
 }
 
@@ -274,6 +280,10 @@ void io_tick(uint32_t cycles) {
   for (; cycles >= M_CYCLE; cycles -= M_CYCLE) {
     div_set(div_counter + M_CYCLE);
     dma_cycle();
+  }
+  /* part of an M-cycle, which only the wait after a speed switch ends with: too short for OAM DMA to move */
+  if (cycles) {
+    div_set(div_counter + cycles);
   }
 }
 
