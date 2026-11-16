@@ -50,12 +50,13 @@
 /* */
 /* Where it's known to differ from the hardware, or is a guess: */
 /* - The DMG's OAM corruption is one console's: DocBoy's, whose 268 tests of it list all of OAM after an instruction */
-/*   at each moment of the scan (264 pass), with Blargg's oam_bug tests agreeing as far as they go. A read's effect */
-/*   on every 4th row is said to differ between consoles. Not done: a write to a row's third word in the M-cycle */
-/*   the scan starts in, where DocBoy's tables have a few cases more, some of them marked as unsteady; */
-/*   what the CPU's read gets back from a spoiled row; and OAM DMA running at the time, when nothing is spoiled */
-/*   here. That the scan misses the objects of a spoiled row is from two tests, which only say it doesn't see the */
-/*   row as spoiled. */
+/*   at each moment of the scan (264 pass), with Blargg's oam_bug tests agreeing as far as they go. What a read does */
+/*   on every 4th row, and at the scan's two ends, rests on those lists alone. Not done: a write to a row's third */
+/*   word in the M-cycle the scan starts in, where DocBoy's tables have a few cases more, some of them marked as */
+/*   unsteady; what the CPU's read gets back from a spoiled row; and OAM DMA running at the time, when nothing is */
+/*   spoiled here. That the scan misses the objects of a spoiled row is from two tests, which only say it doesn't */
+/*   see the row as spoiled. Of the instructions, DocBoy's tests run INC and DEC HL, LD by HL, PUSH and POP, and */
+/*   Blargg's say which others do it; nothing tests an interrupt's dispatch, which is taken to do as PUSH does. */
 /* - Either CGB, by what still fails of its evidence: mode 3 writes to SCX, SCY, LCDC's map and tile data bits and */
 /*   the object bits (mealybug's pictures; of the tile data glitch only one case is done, a tile index under 128 */
 /*   read as its own row, and about 110 of DocBoy's pictures are of it); the window and LYC being switched on and */
@@ -746,8 +747,8 @@ static void scan_object(int index) {
 /*   What a write does is as Pan Docs has it. The rest is read from DocBoy's tests of it, which list all of OAM */
 /* after one instruction at each moment of the scan: reads, which spoil up to five rows by where the scan is, and */
 /* the two M-cycles at the scan's ends, where the CPU's own access gets through and its row is mixed with the */
-/* scan's. What a read on rows 4, 8, 12 and 16 does is said to differ from one console to the next; this is the one */
-/* DocBoy's were measured on. Blargg's oam_bug tests, from another console, pass with it. */
+/* scan's. That is one console's behaviour, the one DocBoy's lists were taken from; Blargg's oam_bug tests, from */
+/* another, pass with it. */
 /*   The scan itself doesn't see the pair of objects in a row spoiled under it: DocBoy's oam_scan_blocked_by tests */
 /* have an object that the spoiling copies into the next row, and the line is drawn with the one. */
 enum {

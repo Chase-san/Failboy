@@ -353,7 +353,9 @@ static void cpu_interrupt(void) {
     --r.PC;
   }
   /* Two M-cycles of waiting, then PC's high byte is pushed, and can land on IE (with SP at 0000); only then is the */
-  /* interrupt picked, so it can be another one, or none at all, which leaves PC at 0000. */
+  /* interrupt picked, so it can be another one, or none at all, which leaves PC at 0000. The second of the two is */
+  /* taken to have SP on the address lines, as the M-cycle before PUSH's writes does: no test of the DMG's OAM */
+  /* corruption takes an interrupt, so that's by likeness. */
   bus_idle();
   bus_count(r.SP);
   bus_write(--r.SP, r.PC >> 8);
