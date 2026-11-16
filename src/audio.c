@@ -60,6 +60,7 @@ enum {
   ENVELOPE_DAC = 0xF8,       /* a starting volume or a rising envelope; with neither, the channel's DAC is off */
   ENVELOPE_RISE = 0x08,
   ENVELOPE_PERIOD = 0x07,
+  ENVELOPE_SHAPE = 0x0F, /* direction and period */
   CONTROL_TRIGGER = 0x80, /* NRx4 */
   CONTROL_LENGTH = 0x40,
   CONTROL_FREQUENCY = 0x07, /* the frequency's high bits */
@@ -91,6 +92,8 @@ enum {
   SQUARE_MULTIPLIER = 4,
   WAVE_MULTIPLIER = 2,
   SQUARE_STEPS = 8,
+  SQUARE_START_WAIT = 8,   /* T-cycles a square channel triggered from stopped waits on top of its period */
+  SQUARE_RESTART_WAIT = 4, /* and one triggered while it plays */
   WAVE_SAMPLES = 32,
   WAVE_TRIGGER_DELAY = 6, /* T-cycles a triggered wave channel waits on top of its period before its first step */
   WAVE_CORRUPT_AT = 2,    /* DMG: a trigger this many T-cycles before the channel's next read corrupts wave RAM */
@@ -159,6 +162,9 @@ struct channel {
   int envelope; /* envelope clocks until its next step */
   int timer;    /* T-cycles until the next step of the waveform */
   int position; /* the step of the duty cycle, or of the wave samples */
+  int level;    /* squares: the duty's bit for this step, as it was when the step began */
+  int quiet;    /* squares: triggered from stopped, and not at its first step yet */
+  int settled;  /* the envelope has run into 0 or 15 and stopped */
 };
 
 static struct channel channels[CHANNELS];
@@ -167,6 +173,7 @@ static int sweep_on;
 static int sweep_timer;     /* sweep clocks until the next sweep */
 static int sweep_frequency; /* the sweep's own copy of channel 1's frequency */
 static int sweep_negated;   /* the sweep has subtracted since channel 1 was triggered */
+static int grid;            /* T-cycles into the square channels' 1 MHz clock, which starts with the APU */
 static uint8_t wave_sample; /* the wave channel's current 4-bit sample */
 static int wave_since;      /* T-cycles since the wave channel last read wave RAM, as far as that matters */
 static uint16_t lfsr = LFSR_RESET;
@@ -294,7 +301,41 @@ static void clock_envelope(int ch) {
     ++c->volume;
   } else if (!(nrx2 & ENVELOPE_RISE) && c->volume > 0) {
     --c->volume;
+  } else {
+    c->settled = 1;
   }
+}
+
+/* Writing NRx2 while its channel plays doesn't load a volume, but the envelope's wiring moves the one it has. What */
+/* it does on a CGB is read off SameSuite's channel_1_volume and nrx2_glitch tests (a CPU CGB E's results): a change */
+/* of direction turns the volume over, and a period going from none to some clocks it once. */
+static void write_envelope(int ch, uint8_t old, uint8_t value) {
+  struct channel *c = &channels[ch];
+  int running = !c->settled;
+  int had_period = (old & ENVELOPE_PERIOD) != 0;
+  int clock = (value & ENVELOPE_PERIOD) != 0 && !had_period && running;
+  if ((value & ENVELOPE_SHAPE) == ENVELOPE_RISE && (old & ENVELOPE_SHAPE) == ENVELOPE_RISE && running) {
+    clock = 1; /* rising with no period, before and after */
+  }
+  if ((old ^ value) & ENVELOPE_RISE) {
+    if (value & ENVELOPE_RISE) {
+      c->volume = VOLUME_MAX - 1 - c->volume;
+      if (!had_period && running) {
+        ++c->volume;
+      }
+      clock = 0;
+    } else {
+      c->volume = VOLUME_MAX + 1 - c->volume;
+    }
+  }
+  if (clock) {
+    if (value & ENVELOPE_RISE) {
+      ++c->volume;
+    } else {
+      --c->volume;
+    }
+  }
+  c->volume &= VOLUME_MAX;
 }
 
 /* DMG: triggering the wave channel just as it's about to read its next byte writes over the start of wave RAM. If */
@@ -317,6 +358,7 @@ static void trigger(int ch, int extra_clock) {
   if (ch == WAVE && !cgb && c->on && c->timer == WAVE_CORRUPT_AT) {
     corrupt_wave();
   }
+  int was_on = c->on;
   c->on = dac_on(ch) != 0; /* with its DAC off it stops again right away */
   if (c->length == 0) {
     c->length = full_length(ch);
@@ -331,6 +373,18 @@ static void trigger(int ch, int extra_clock) {
   if (ch != WAVE) {
     c->volume = reg(ch, 2) >> ENVELOPE_VOLUME_SHIFT;
     c->envelope = timer_period(reg(ch, 2) & ENVELOPE_PERIOD);
+    c->settled = 0;
+  }
+  if (ch == SQUARE1 || ch == SQUARE2) {
+    /* The squares step on a 1 MHz clock, and the wait starts at its next tick. The duty cycle carries on from */
+    /* where it was, and a channel that was stopped puts nothing out until its first step. */
+    c->timer += (SQUARE_MULTIPLIER - grid) % SQUARE_MULTIPLIER;
+    if (was_on) {
+      c->timer += SQUARE_RESTART_WAIT;
+    } else {
+      c->timer += SQUARE_START_WAIT;
+      c->quiet = 1;
+    }
   }
   switch (ch) {
     case SQUARE1:
@@ -382,8 +436,11 @@ static void set_power(int on) {
   if (!(IO_REG(NR52) & NR52_POWER)) {
     IO_REG(NR52) = NR52_POWER;
     sequencer = 0;
+    grid = 0;
     channels[SQUARE1].position = 0;
     channels[SQUARE2].position = 0;
+    channels[SQUARE1].level = 0;
+    channels[SQUARE2].level = 0;
     wave_sample = 0;
   }
 }
@@ -400,7 +457,10 @@ static int output(int ch) {
     case NOISE:
       return (~lfsr & 1) * c->volume;
     default:
-      return ((duty_waves[reg(ch, 1) >> DUTY_SHIFT] >> (SQUARE_STEPS - 1 - c->position)) & 1) * c->volume;
+      if (c->quiet) {
+        return 0;
+      }
+      return c->level * c->volume;
   }
 }
 
@@ -433,6 +493,8 @@ static void advance(int ch) {
     }
     default:
       c->position = (c->position + 1) % SQUARE_STEPS;
+      c->level = (duty_waves[reg(ch, 1) >> DUTY_SHIFT] >> (SQUARE_STEPS - 1 - c->position)) & 1;
+      c->quiet = 0;
       break;
   }
 }
@@ -509,6 +571,7 @@ static void catch_up(void) {
     }
     pending -= run;
     sample_clock += run;
+    grid = (grid + run) % SQUARE_MULTIPLIER;
     if (wave_since < WAVE_ACCESS_WINDOW) {
       wave_since += run;
     }
@@ -643,8 +706,12 @@ void audio_write(uint16_t address, uint8_t value) {
       break;
     case NR12:
     case NR22:
-    case NR30:
     case NR42:
+      if (channels[ch].on && cgb) {
+        write_envelope(ch, old, value);
+      }
+      /* fallthrough */
+    case NR30:
       /* turning a DAC off stops its channel */
       if (!dac_on(ch)) {
         channels[ch].on = 0;
@@ -675,6 +742,7 @@ void audio_reset(void) {
   sweep_timer = 0;
   sweep_frequency = 0;
   sweep_negated = 0;
+  grid = 0;
   wave_sample = 0;
   wave_since = WAVE_ACCESS_WINDOW;
   lfsr = LFSR_RESET;
