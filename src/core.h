@@ -141,7 +141,9 @@ void io_bios_init(void); /* the divider as the boot ROM leaves it */
 void io_request(uint8_t);
 void io_tick(uint32_t);
 void io_joypad(uint8_t);       /* the GB_BUTTON_s held down */
-int io_speed_switch(void);     /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
+int io_joypad_pressed(void);   /* one of them on a line P1 has selected */
+int io_speed_armed(void);      /* CGB: KEY1 asks for a speed switch */
+int io_speed_switch(int late); /* CGB: STOP switching speed, if KEY1 asks; returns whether it did */
 int io_dma_conflict(uint16_t); /* the CPU's access collides with OAM DMA: it's to OAM, or the bus DMA is reading */
 uint8_t io_dma_read(uint16_t); /* what the CPU reads then */
 void io_dma_write(uint16_t, uint8_t); /* and what its write does: none of what it meant */
@@ -285,7 +287,8 @@ extern uint8_t halt_bug;
 extern uint8_t stopped;
 extern uint8_t double_speed; /* CGB */
 extern uint8_t cpu_locked;
-extern uint32_t cpu_paused; /* CGB: M-cycles left of the wait after a speed switch */
+extern uint32_t cpu_paused;   /* CGB: M-cycles left of the wait after a speed switch */
+extern uint8_t cpu_switching; /* CGB: M-cycles until a speed switch that didn't stop the CPU takes effect */
 
 int cpu_bios_init(void); /* everything as the boot ROM leaves it; 0 if the compiler laid F's bits out wrongly */
 uint32_t step(void);     /* runs one instruction (or interrupt/halt cycle), returns T-cycles at the normal speed */

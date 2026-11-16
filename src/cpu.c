@@ -27,11 +27,12 @@ uint64_t cycle_counter = 0;
 uint8_t ime = 0;      /* interrupt master enable */
 uint8_t ei_delay = 0; /* EI takes effect after the following instruction */
 uint8_t halted = 0;
-uint8_t halt_bug = 0;     /* PC won't move past the next opcode (see HALT) */
-uint8_t stopped = 0;      /* by STOP, until a button is pressed */
-uint8_t double_speed = 0; /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
-uint8_t cpu_locked = 0;   /* an illegal opcode hangs the real CPU */
-uint32_t cpu_paused = 0;  /* CGB: T-cycles of the normal speed the CPU has still to sit out after switching speed */
+uint8_t halt_bug = 0;      /* PC won't move past the next opcode (see HALT) */
+uint8_t stopped = 0;       /* by STOP, until a button is pressed */
+uint8_t double_speed = 0;  /* CGB: the CPU at 8 MHz, switched by STOP with KEY1 armed */
+uint8_t cpu_locked = 0;    /* an illegal opcode hangs the real CPU */
+uint8_t cpu_switching = 0; /* CGB: M-cycles until a speed switch that didn't stop the CPU takes effect */
+uint32_t cpu_paused = 0;   /* CGB: T-cycles of the normal speed the CPU has still to sit out after switching speed */
 
 /* T-cycles of the current step the bus has already run */
 static uint32_t bus_cycles = 0;
@@ -64,6 +65,9 @@ static void run_machine(uint32_t cycles) {
     audio_tick(M_CYCLE >> double_speed);
     if (!doctor) {
       video_owed += M_CYCLE >> double_speed;
+    }
+    if (cpu_switching && --cpu_switching == 0) {
+      io_speed_switch(1);
     }
   }
 }
@@ -268,7 +272,7 @@ static const instruction_f instr_map[256] = {
 /* M-cycles. Conditional branches list the not-taken cost; see cpu_instr.c. */
 static const uint8_t instr_timing[256] = {
     1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1,  // 0x00 to 0x0F
-    2, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1,  // 0x10 to 0x1F
+    1, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1,  // 0x10 to 0x1F
     2, 3, 2, 2, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1,  // 0x20 to 0x2F
     2, 3, 2, 2, 3, 3, 3, 1, 2, 2, 2, 2, 1, 1, 2, 1,  // 0x30 to 0x3F
     1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1,  // 0x40 to 0x4F
@@ -438,6 +442,7 @@ int cpu_bios_init(void) {
   r.SP = 0xFFFE;
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
   cpu_paused = 0;
+  cpu_switching = 0;
   cycle_counter = 0;
   bus_cycles = 0;
   video_owed = 0;

@@ -799,13 +799,40 @@ enum {
   /* whole number of M-cycles. An interrupt cuts the wait short (step(), cpu.c). */
   SPEED_SWITCH_TO_DOUBLE = 0x10002,
   SPEED_SWITCH_TO_NORMAL = 0x20003,
+  SPEED_SWITCH_LATE = 1, /* M-cycles after the STOP that a switch with an interrupt waiting takes effect */
 };
 
-void STOP(void) {
-  ++r.PC; /* 10 00: the second byte takes an M-cycle, but isn't used */
+/* 10 00, where the second byte takes an M-cycle but isn't used; with an interrupt already waiting there's no */
+/* second byte, and what follows the 10 is run as the next instruction. */
+static void stop_operand(void) {
+  ++r.PC;
   bus_idle();
+  cycle_counter += M_CYCLE;
+}
+
+/* What STOP does goes by three things: whether a button on a selected line is down, whether an interrupt is */
+/* waiting, and whether a CGB game has KEY1 armed. DocBoy's tests of each combination agree with the chart of it */
+/* in Pan Docs. */
+void STOP(void) {
+  int waiting = (IO_REG(IO_IF) & io_ie & INT_ALL) != 0;
+  if (io_joypad_pressed()) {
+    /* with a button down nothing stops: it's a HALT, or with an interrupt waiting, nothing at all */
+    if (!waiting) {
+      stop_operand();
+      halted = 1;
+    }
+    return;
+  }
+  if (!waiting) {
+    stop_operand();
+  }
   bus_sync();
-  if (io_speed_switch()) {
+  if (waiting && io_speed_armed()) {
+    /* with an interrupt waiting the CPU doesn't stand still for the switch, which comes an M-cycle on */
+    cpu_switching = SPEED_SWITCH_LATE;
+    return;
+  }
+  if (io_speed_switch(0)) {
     /* the CPU stands still while the clock settles */
     cpu_paused = SPEED_SWITCH_TO_NORMAL;
     if (double_speed) {

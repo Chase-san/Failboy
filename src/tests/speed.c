@@ -15,7 +15,8 @@
 
 /* A Game Boy Color's speed switch: STOP with KEY1 armed stops the CPU for a while that isn't a whole number of its */
 /* M-cycles, restarts the divider, and can be cut short by an interrupt. The figures are the core's (cpu_instr.c), */
-/* which has them from other people's tests of the hardware; this is to notice them moving. */
+/* which has them from other people's tests of the hardware; this is to notice them moving. And what else a STOP */
+/* is, by whether a button is down and an interrupt waiting. */
 
 #include <stdlib.h>
 
@@ -40,6 +41,12 @@ enum {
   DIV_PERIOD_M_CYCLES = 64, /* M-cycles of the CPU to a count of DIV, at either speed */
   SECOND_STOP = 0x0200,     /* where the program's second STOP is */
   THIRD_STOP = 0x0300,
+  FOURTH_STOP = 0x0400, /* these three have an INC A after them */
+  FIFTH_STOP = 0x0500,
+  SIXTH_STOP = 0x0600,
+  STOP_GAP = 0x0100,
+  P1 = 0xFF00,
+  P1_BUTTONS = 0x10, /* written to P1: the buttons' line selected, the directions' not */
   STOP_SIZE = 2,
 };
 
@@ -53,6 +60,18 @@ static uint16_t pc(struct gb *gb) {
   struct gb_cpu cpu;
   gb_cpu(gb, &cpu);
   return cpu.pc;
+}
+
+static uint8_t accumulator(struct gb *gb) {
+  struct gb_cpu cpu;
+  gb_cpu(gb, &cpu);
+  return (uint8_t)(cpu.af >> 8);
+}
+
+static int halted(struct gb *gb) {
+  struct gb_cpu cpu;
+  gb_cpu(gb, &cpu);
+  return cpu.halted;
 }
 
 /* runs to where the CPU is about to fetch from an address, and says how many ticks that took */
@@ -76,6 +95,10 @@ int main(void) {
   test_program(rom, first_switch, sizeof(first_switch));
   rom[SECOND_STOP] = 0x10;
   rom[THIRD_STOP] = 0x10;
+  for (uint16_t stop = FOURTH_STOP; stop <= SIXTH_STOP; stop += STOP_GAP) {
+    rom[stop] = 0x10;
+    rom[stop + 1] = 0x3C; /* INC A */
+  }
   struct gb *gb = test_boot(GB_CGB_AUTO, rom, TEST_ROM_SIZE, NULL);
   CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
 
@@ -132,6 +155,44 @@ int main(void) {
   CHECK(gb_ticks(gb) - before < TO_DOUBLE / 4);
   CHECK(gb_read(gb, IF) & IF_TIMER);
   CHECK(gb_read(gb, KEY1) == KEY1_DOUBLE);
+
+  /* What else a STOP can be. With a button down on a line P1 has selected, and no interrupt waiting, it's a HALT of */
+  /* 2 bytes: the INC A after it isn't run. */
+  gb_write(gb, TAC, 0);
+  gb_write(gb, IE, 0);
+  gb_write(gb, P1, P1_BUTTONS);
+  gb_buttons(gb, GB_BUTTON_A);
+  gb_write(gb, IF, 0);
+  run_to(gb, FOURTH_STOP);
+  uint8_t a = accumulator(gb);
+  gb_step(gb);
+  CHECK(pc(gb) == FOURTH_STOP + STOP_SIZE);
+  CHECK(halted(gb));
+  CHECK(accumulator(gb) == a);
+
+  /* with an interrupt waiting as well it's nothing at all, 1 byte long, and the INC A runs */
+  gb_write(gb, IE, IF_TIMER);
+  gb_write(gb, IF, IF_TIMER);
+  run_to(gb, FIFTH_STOP);
+  gb_step(gb);
+  CHECK(pc(gb) == FIFTH_STOP + 1);
+  CHECK(!halted(gb));
+  gb_step(gb);
+  CHECK(accumulator(gb) == (uint8_t)(a + 1));
+  CHECK(gb_read(gb, KEY1) == KEY1_DOUBLE);
+
+  /* and with no button, KEY1 armed and an interrupt waiting, the speed switches without the CPU standing still: */
+  /* 1 byte, and the switch an M-cycle on, as the INC A ends */
+  gb_buttons(gb, 0);
+  gb_write(gb, KEY1, KEY1_ARMED);
+  run_to(gb, SIXTH_STOP);
+  CHECK(gb_step(gb) == M_CYCLE / 2);
+  CHECK(pc(gb) == SIXTH_STOP + 1);
+  CHECK(gb_read(gb, KEY1) == (KEY1_DOUBLE | KEY1_ARMED));
+  CHECK(gb_step(gb) == M_CYCLE / 2);
+  CHECK(accumulator(gb) == (uint8_t)(a + 2));
+  CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
+  CHECK(gb_read(gb, DIV) == 0);
 
   gb_destroy(gb);
   free(rom);

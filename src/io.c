@@ -153,6 +153,9 @@ static uint8_t joypad_read(void) {
   return P1_UNUSED | select | (~pressed & P1_INPUTS);
 }
 
+/* a button on a line P1 has selected is down */
+int io_joypad_pressed(void) { return (joypad_read() & P1_INPUTS) != P1_INPUTS; }
+
 /* The PPU's registers; DMA sits in the middle of them but stays here. A CGB game has more. */
 static int is_video_register(uint16_t address) {
   if (address >= IO_LCDC && address <= IO_WX) {
@@ -227,15 +230,20 @@ static void div_set(uint16_t value) {
   }
 }
 
-/* CGB: STOP switches speed, if KEY1 is armed for it; returns whether it did */
-int io_speed_switch(void) {
-  if (!cgb_mode || !(IO_REG(IO_KEY1) & KEY1_SWITCH)) {
+/* CGB: a game has KEY1 armed for a speed switch */
+int io_speed_armed(void) { return cgb_mode && (IO_REG(IO_KEY1) & KEY1_SWITCH); }
+
+/* CGB: STOP switches speed, if KEY1 is armed for it; returns whether it did. It's late when an interrupt was */
+/* waiting, and the CPU carries on through it. */
+int io_speed_switch(int late) {
+  if (!io_speed_armed()) {
     return 0;
   }
   double_speed = !double_speed;
   IO_REG(IO_KEY1) = 0;
-  /* the divider starts again, an M-cycle of the double speed on when that's the speed left */
-  if (double_speed) {
+  /* the divider starts again: an M-cycle of the double speed on, when that's the speed left and the CPU is */
+  /* stopped for the switch */
+  if (double_speed || late) {
     div_set(0);
   } else {
     div_set(DIV_AFTER_DOUBLE);
