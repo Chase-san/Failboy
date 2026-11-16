@@ -33,15 +33,15 @@ static struct gb gb_only;
 int doctor = 0;
 int revision = GB_HARDWARE_DMG_B;
 uint8_t cgb = 0;
-uint8_t cgb_e = 0;
+uint8_t cgb_d = 0;
 uint8_t cgb_mode = 0;
 
 /* the revision the core is, for each console a host can ask for */
 static const int hardware[GB_REVISIONS] = {
     [GB_DMG_AUTO] = GB_HARDWARE_DMG_B,
-    [GB_CGB_AUTO] = GB_HARDWARE_CGB_E,
+    [GB_CGB_AUTO] = GB_HARDWARE_CGB_D,
     [GB_CGB_C] = GB_HARDWARE_CGB_C,
-    [GB_CGB_E] = GB_HARDWARE_CGB_E,
+    [GB_CGB_D] = GB_HARDWARE_CGB_D,
 };
 
 /* **************************************** */
@@ -120,7 +120,7 @@ enum gb_error gb_create(const struct gb_config *config, struct gb **gb) {
   }
   revision = hardware[console];
   cgb = (revision & GB_CONSOLE) == GB_CONSOLE_CGB;
-  cgb_e = revision == GB_HARDWARE_CGB_E;
+  cgb_d = revision == GB_HARDWARE_CGB_D;
   /* a Game Boy Color runs an original Game Boy's game in its compatibility mode */
   cgb_mode = cgb && cart_cgb();
   doctor = config->doctor != 0;

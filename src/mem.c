@@ -46,15 +46,16 @@ uint8_t oam[OAM_SIZE];
 /* FEA0-FEFF, which nothing is meant to use. A DMG has nothing there. A CGB has memory, laid out by revision, and */
 /* the core has two of the layouts. Its CGB C leaves two address lines out, so each byte turns up at four addresses */
 /* (FEA0, FEA8, FEB0 and FEB8 are one byte): that's how the source of which.gb, which tells revisions apart by it, */
-/* describes a CGB up to C, and Gambatte's results for a CGB C are the same with it or with the other. Its CGB E has */
-/* the layout DocBoy's 15 tests find, which is the one which.gb calls a CGB D's: FEA0-FEBF take a byte each, and 16 */
-/* more turn up four times over from FEC0 to FEFF. A real CGB E, by Pan Docs and which.gb, has no memory here and */
-/* reads back a pattern made of the address; the core's CGB E is a D in this, as DocBoy's machine is. */
+/* describes a CGB up to C, and Gambatte's results for a CGB C are the same with it or with the other. Its CGB D has */
+/* the layout which.gb gives a CGB D, which DocBoy's 15 tests find too: FEA0-FEBF take a byte each, and 16 more */
+/* turn up four times over from FEC0 to FEFF. which.gb, run on a real CGB-CPU-04 and a real CGB-CPU-05, names */
+/* them a C and a D, which bears both layouts out. A CGB E, by Pan Docs and which.gb, has no memory here and reads */
+/* back a pattern made of the address; the core has no CGB E. */
 /* The shootout's cgb-acid-hell goes by these bytes, and isn't something the choice was made for: see video.c. */
 enum {
   UNUSED_SIZE = 0x60,
   UNUSED_C_ALIAS = 0x18, /* the address lines a CGB C leaves out */
-  UNUSED_PLAIN = 0x20,   /* CGB E: the bytes with an address each */
+  UNUSED_PLAIN = 0x20,   /* CGB D: the bytes with an address each */
   UNUSED_SHARED = 0x10,  /* and the ones that repeat */
 };
 
@@ -160,7 +161,7 @@ uint8_t wrame_read(uint16_t address) { return wram_read(address - (ECHO_START - 
 /* where in unused[] an address from FEA0 up is */
 static unsigned int unused_index(uint16_t address) {
   unsigned int offset = address - (OAM_START + OAM_SIZE);
-  if (!cgb_e) {
+  if (!cgb_d) {
     return offset & ~(unsigned int)UNUSED_C_ALIAS;
   }
   if (offset >= UNUSED_PLAIN) {

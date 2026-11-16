@@ -53,7 +53,7 @@ enum gb_revision {
   GB_DMG_AUTO, /* the original Game Boy */
   GB_CGB_AUTO, /* Game Boy Color, which runs an original Game Boy's game in its compatibility mode */
   GB_CGB_C,    /* a Game Boy Color with a CPU CGB C */
-  GB_CGB_E,    /* a Game Boy Color with a CPU CGB E, the last one, which is what GB_CGB_AUTO gives */
+  GB_CGB_D,    /* a Game Boy Color with a CPU CGB D, which is what GB_CGB_AUTO gives */
   GB_REVISIONS,
 };
 
@@ -63,7 +63,7 @@ enum gb_revision {
 enum gb_hardware {
   GB_HARDWARE_DMG_B = 0x02, /* the original Game Boy, whose CPUs were 0, A, B and C */
   GB_HARDWARE_CGB_C = 0x43, /* Game Boy Color: 0, then A to E */
-  GB_HARDWARE_CGB_E = 0x45,
+  GB_HARDWARE_CGB_D = 0x44,
 };
 
 enum {

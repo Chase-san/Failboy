@@ -351,9 +351,10 @@ static void cpu_interrupt(void) {
 
 /* T-cycles of the normal speed that the CPU still waits once an interrupt has cut a speed switch's wait short: an */
 /* M-cycle of the double speed, or on a CGB C coming back to the normal speed, an M-cycle of that. DocBoy's tests */
-/* (a CGB E's) have the first; AGE has a test apiece for the two revisions, and the C's wants the second. */
+/* (which the core's CGB D is held to) have the first; AGE has a test apiece for a B/C and an E, and the B/C's */
+/* wants the second. */
 static uint32_t speed_wake(void) {
-  if (!cgb_e && !double_speed) {
+  if (!cgb_d && !double_speed) {
     return M_CYCLE;
   }
   return M_CYCLE / 2;

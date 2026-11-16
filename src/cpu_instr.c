@@ -794,7 +794,7 @@ void HALT(void) {
 enum {
   /* T-cycles of the normal speed that a speed switch stops the CPU for, the rest of the machine running on (the */
   /* divider and timer at the new speed): about 2^17 of the CPU's own cycles at the speed it's leaving, so twice as */
-  /* long coming back from double as going to it. The exact figures are what DocBoy's tests of a CGB E, Gambatte's */
+  /* long coming back from double as going to it. The exact figures are what DocBoy's tests (the CGB D's), Gambatte's */
   /* speedchange results for a CGB C and AGE's spsw tests agree on most, tried a T-cycle at a time; neither is a */
   /* whole number of M-cycles. An interrupt cuts the wait short (step(), cpu.c). */
   SPEED_SWITCH_TO_DOUBLE = 0x10002,

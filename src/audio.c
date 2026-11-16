@@ -22,8 +22,8 @@
 /* - The channel timing is the one both of the core's CGBs and its DMG use. SameSuite's notes say a CPU CGB C reads */
 /*   a glitched amplitude from PCM12 and PCM34 in the M-cycle a square or the noise changes, which isn't understood */
 /*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. */
-/* - What a write to NRx2 does to a playing channel's volume is a CPU CGB E's. A DMG's differs, and the core's DMG */
-/*   leaves the volume alone. */
+/* - What a write to NRx2 does to a playing channel's volume is a CPU CGB D's and E's. A DMG's differs, and the */
+/*   core's DMG leaves the volume alone. */
 /* - Of SameSuite's APU tests, these fail: channel_1_sweep_restart_2 (which its notes say a CPU CGB D fails too), */
 /*   channel_4_freq_change, the envelope's speed change and two cases of the NRx2 glitch after a long wait (both of */
 /*   each square), and the three that start the APU with DIV's bit 4 set (a skipped first step of the frame */
@@ -349,8 +349,9 @@ static void clock_envelope(int ch) {
 }
 
 /* Writing NRx2 while its channel plays doesn't load a volume, but the envelope's wiring moves the one it has. What */
-/* it does on a CGB is read off SameSuite's channel_1_volume and nrx2_glitch tests (a CPU CGB E's results): a change */
-/* of direction turns the volume over, and a period going from none to some clocks it once. */
+/* it does on a CGB is read off SameSuite's channel_1_volume and nrx2_glitch tests (a CPU CGB E's results, which */
+/* its notes say a CPU CGB D shares): a change of direction turns the volume over, and a period going from none to */
+/* some clocks it once. */
 static void write_envelope(int ch, uint8_t old, uint8_t value) {
   struct channel *c = &channels[ch];
   int running = !c->settled;

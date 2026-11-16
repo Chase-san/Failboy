@@ -82,7 +82,7 @@ static const struct {
     {"dmg", GB_DMG_AUTO},    //
     {"cgb", GB_CGB_AUTO},    //
     {"cgbc", GB_CGB_C},      //
-    {"cgbe", GB_CGB_E},      //
+    {"cgbd", GB_CGB_D},      //
     {"cgbfb", GB_CGB_AUTO},  // once a mode of its own; a cgb falls back by itself now
 };
 
@@ -121,7 +121,7 @@ static int usage(const char *name) {
   fprintf(stderr, "         dmg   original gameboy\n");
   fprintf(stderr, "         cgb   color gameboy, which runs an original gameboy game in its fallback mode\n");
   fprintf(stderr, "         cgbc  color gameboy with a CPU CGB C\n");
-  fprintf(stderr, "         cgbe  color gameboy with a CPU CGB E, which is what cgb gives\n");
+  fprintf(stderr, "         cgbd  color gameboy with a CPU CGB D, which is what cgb gives\n");
   fprintf(stderr, "         sgb   super gameboy (unimplemented)\n");
   fprintf(stderr, "  --doctor     print a Gameboy Doctor trace to stdout (serial output goes to stderr)\n");
   fprintf(stderr, "  --frames N   stop after N frames\n");
