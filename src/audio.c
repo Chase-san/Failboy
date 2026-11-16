@@ -15,6 +15,19 @@
 
 /* The APU: two square channels (the first with a frequency sweep), a wave channel and a noise channel, clocked by */
 /* the 512 Hz frame sequencer and mixed down to stereo, which the front end takes as samples at AUDIO_RATE. */
+/* */
+/* When each channel steps, to the T-cycle, is held to tests that read the channels back through a CGB's PCM12 and */
+/* PCM34: SameSuite's, whose results are a CPU CGB D's and E's, with Blargg's, Gambatte's and DocBoy's sound tests */
+/* beside them. Where it's known to differ from the hardware: */
+/* - The channel timing is the one both of the core's CGBs and its DMG use. SameSuite's notes say a CPU CGB C reads */
+/*   a glitched amplitude from PCM12 and PCM34 in the M-cycle a square or the noise changes, which isn't understood */
+/*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. */
+/* - What a write to NRx2 does to a playing channel's volume is a CPU CGB E's. A DMG's differs, and the core's DMG */
+/*   leaves the volume alone. */
+/* - Of SameSuite's APU tests, these fail: the sweep's three, channel_4_freq_change, the envelope's speed change and */
+/*   two cases of the NRx2 glitch after a long wait (both of each square), and the three that start the APU with */
+/*   DIV's bit 4 set (a skipped first step of the frame sequencer). */
+/* - Nothing here was listened to: the tests read digital outputs, not what the mixer and the speaker make of them. */
 
 #include <string.h>
 
