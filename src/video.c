@@ -58,11 +58,12 @@
 /* - Tests that lost to a majority: on a CGB C, four of Gambatte's results that passed before the edges above and */
 /*   SCY and SCX landing a dot early (16 came for them): lcd_offset's offset2_lyc98int_ly_count 1 and 3 and its */
 /*   offset1_lyc8fint_m1stat_ds_1, and enable_display's ly0_late_scx7_m3stat_scx0_2. Nothing on a CGB E. */
-/* - Three of the shootout battery's CGB tests fail as either revision: cgb-acid-hell (which DocBoy's author says */
-/*   fails on a real CGB-E too), daid's ppu_scanline_bgp on a GBC and its speed_switch_timing_ly. They once passed */
-/*   with three numbers fitted to them. Two of those, the PPU running 2 dots ahead of the CPU and its pixels */
-/*   starting 2 dots sooner, both revisions' evidence contradicts; the third, palette writes landing 2 dots early, */
-/*   is what a CGB E's has since asked for. */
+/* - Three of the shootout battery's CGB tests (cgb-acid-hell, daid's ppu_scanline_bgp on a GBC and its */
+/*   speed_switch_timing_ly) once passed only with numbers fitted to them: the PPU running 2 dots ahead of the CPU, */
+/*   its pixels starting 2 dots sooner, palette writes landing 2 dots early. What they wanted was a halted CGB */
+/*   waking an M-cycle later (halt_cycle, cpu.c), as all three wait in HALT; with that they pass as a CGB E, and */
+/*   all but ppu_scanline_bgp as a CGB C, whose palette writes land a dot later. DocBoy's author says */
+/*   cgb-acid-hell fails on a real CGB-E, which this doesn't bear out. */
 /* - That a CGB C's edges go unseen at double speed (dmg_edges()) is what Gambatte's results ask for, not a known */
 /*   mechanism: it may be when a CPU at that speed reads, and not the PPU doing anything else. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
@@ -89,9 +90,11 @@
 /*   results agree, for a DMG and for both CGBs. The other state it leaves isn't: on a CGB most of DocBoy's boot */
 /*   tests still fail (the timer by the game's title, the colors given to a DMG game, HRAM, sound). */
 /* - A line with more to fetch than there's time for is cut off at its end, rather than running into the next. */
-/* - Outside this file: a halted CPU's look for interrupts halfway through an M-cycle (halt_cycle, cpu.c) is what */
-/*   Mooneye's hblank_ly_scx_timing wants of a DMG, and is done the same on a CGB and at double speed; and the wait */
-/*   after a speed switch (STOP, cpu_instr.c) doesn't satisfy most of Gambatte's speedchange results. */
+/* - Outside this file: when a halted CPU looks for interrupts (halt_cycle, cpu.c) and how long a speed switch */
+/*   stops it (STOP, cpu_instr.c) are both what other people's tests agree on most, tried a step at a time, and not */
+/*   known mechanisms. A speed switch can leave the CPU's M-cycles on other dots of a line than the one this file */
+/*   was written around (M_CYCLE_DOT); LY read on the dot it changes is done for that, and nothing else: of */
+/*   Gambatte's 62 lcd_offset results for a CGB C, which test just that, 25 fail. */
 
 #include <string.h>
 
