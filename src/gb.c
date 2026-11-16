@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 #include "core.h"
+#include "rtc.h"
 
 /* The one Game Boy. The machine itself is in each module's globals, so this is only what the host gave it and what */
 /* its runs keep count of. */
@@ -168,6 +169,9 @@ enum gb_pixel_format gb_pixel_format(const struct gb *gb) {
 uint32_t gb_step(struct gb *gb) {
   uint32_t ticks = step();
   gb->ticks += ticks;
+  if (cart_has_rtc()) {
+    rtc_advance(ticks);
+  }
   return ticks;
 }
 

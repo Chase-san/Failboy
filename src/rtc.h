@@ -18,15 +18,17 @@
 
 #include <stdint.h>
 
-/* The MBC3's real-time clock, done cheaply: it remembers the registers as they were at some moment of host time, */
-/* and works out the present from the host clock whenever the game latches it, so it never has to tick. */
+/* The MBC3's real-time clock. While the machine runs it counts the machine's own time, so a game sees a second pass */
+/* in a second of its own, however fast or slow the host runs it; the host's clock only tells it how long the power */
+/* was off, between a save and the load that follows. */
 
 enum {
   RTC_REGISTERS = 5,   /* seconds, minutes, hours, day counter low, then day counter high and flags */
-  RTC_STATE_SIZE = 13, /* those registers, then the host time they were right at (8 bytes, little-endian) */
+  RTC_STATE_SIZE = 13, /* those registers, then the host time they were saved at (8 bytes, little-endian) */
 };
 
 void rtc_reset(void);
+void rtc_advance(uint32_t);   /* T-cycles of the machine's time have passed */
 void rtc_latch(void);         /* copies the present into the registers the game reads */
 uint8_t rtc_read(int);        /* a latched register, 0 to RTC_REGISTERS - 1 */
 void rtc_write(int, uint8_t); /* sets the clock */

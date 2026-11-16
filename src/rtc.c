@@ -32,8 +32,6 @@ enum {
   DAY_HIGH_BIT = 0x01, /* bit 8 of the day counter */
   HALT = 0x40,
   DAY_CARRY = 0x80, /* the day counter overflowed; stays set until the game clears it */
-  DAY_LOW_BITS = 8,
-  DAYS = 512, /* where the day counter wraps */
   STATE_TIME = RTC_REGISTERS,
   TIME_BYTES = 8,
 };
@@ -42,64 +40,103 @@ enum {
   SECONDS_PER_MINUTE = 60,
   MINUTES_PER_HOUR = 60,
   HOURS_PER_DAY = 24,
-  SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR,
-  SECONDS_PER_DAY = SECONDS_PER_HOUR * HOURS_PER_DAY,
+  SECONDS_PER_DAY = SECONDS_PER_MINUTE * MINUTES_PER_HOUR * HOURS_PER_DAY,
+  DAY_LOW_TOP = 0xFF,
+  /* Where in its second the clock is when nothing says: a real one's crystal runs on with the power off, so it could */
+  /* be anywhere, and halfway is as good a guess as the start. */
+  UNKNOWN_FRACTION = GB_CLOCK_HZ / 2,
 };
 
 /* the bits each register really has */
 static const uint8_t register_mask[RTC_REGISTERS] = {0x3F, 0x3F, 0x1F, 0xFF, 0xC1};
 
-/* The registers as they were at host time `since`; while halted, just as they are. */
-static uint8_t base[RTC_REGISTERS];
-static int64_t since;
+static uint8_t now[RTC_REGISTERS];     /* the clock's counters */
+static uint32_t fraction;              /* T-cycles into the present second */
+static uint8_t latched[RTC_REGISTERS]; /* what the game reads: the counters at the last latch */
 
-/* what the game reads: the registers at the last latch */
-static uint8_t latched[RTC_REGISTERS];
-
-/* the registers as of now */
-static void present(uint8_t *out) {
-  memcpy(out, base, RTC_REGISTERS);
-  int64_t elapsed = host_clock() - since;
-  if ((base[RTC_DAY_HIGH] & HALT) || elapsed <= 0) {
+/* A day on: the 9-bit day counter comes round to 0 with the carry flag left set. */
+static void day(void) {
+  if (now[RTC_DAY_LOW] != DAY_LOW_TOP) {
+    ++now[RTC_DAY_LOW];
     return;
   }
-  int64_t days = base[RTC_DAY_LOW] | (base[RTC_DAY_HIGH] & DAY_HIGH_BIT) << DAY_LOW_BITS;
-  int64_t total = base[RTC_SECONDS] + base[RTC_MINUTES] * SECONDS_PER_MINUTE + base[RTC_HOURS] * SECONDS_PER_HOUR +
-                  days * SECONDS_PER_DAY + elapsed;
-  days = total / SECONDS_PER_DAY;
-  out[RTC_SECONDS] = total % SECONDS_PER_MINUTE;
-  out[RTC_MINUTES] = total / SECONDS_PER_MINUTE % MINUTES_PER_HOUR;
-  out[RTC_HOURS] = total / SECONDS_PER_HOUR % HOURS_PER_DAY;
-  if (days >= DAYS) {
-    out[RTC_DAY_HIGH] |= DAY_CARRY;
-    days %= DAYS;
+  now[RTC_DAY_LOW] = 0;
+  if (now[RTC_DAY_HIGH] & DAY_HIGH_BIT) {
+    now[RTC_DAY_HIGH] = (now[RTC_DAY_HIGH] & ~DAY_HIGH_BIT) | DAY_CARRY;
+  } else {
+    now[RTC_DAY_HIGH] |= DAY_HIGH_BIT;
   }
-  out[RTC_DAY_LOW] = days;
-  out[RTC_DAY_HIGH] = (out[RTC_DAY_HIGH] & ~DAY_HIGH_BIT) | days >> DAY_LOW_BITS;
+}
+
+/* A second on. Each counter is as wide as its register and carries only from its proper top: one written past that */
+/* (seconds of 60 to 63, say) counts on to the end of its bits and comes round to 0 without carrying. */
+static void second(void) {
+  now[RTC_SECONDS] = (now[RTC_SECONDS] + 1) & register_mask[RTC_SECONDS];
+  if (now[RTC_SECONDS] != SECONDS_PER_MINUTE) {
+    return;
+  }
+  now[RTC_SECONDS] = 0;
+  now[RTC_MINUTES] = (now[RTC_MINUTES] + 1) & register_mask[RTC_MINUTES];
+  if (now[RTC_MINUTES] != MINUTES_PER_HOUR) {
+    return;
+  }
+  now[RTC_MINUTES] = 0;
+  now[RTC_HOURS] = (now[RTC_HOURS] + 1) & register_mask[RTC_HOURS];
+  if (now[RTC_HOURS] != HOURS_PER_DAY) {
+    return;
+  }
+  now[RTC_HOURS] = 0;
+  day();
+}
+
+static int stopped_clock(void) { return (now[RTC_DAY_HIGH] & HALT) != 0; }
+
+/* The clock runs on the machine's own time while it's on. */
+void rtc_advance(uint32_t ticks) {
+  if (stopped_clock()) {
+    return;
+  }
+  fraction += ticks;
+  while (fraction >= GB_CLOCK_HZ) {
+    fraction -= GB_CLOCK_HZ;
+    second();
+  }
+}
+
+/* The time the power was off for, which only the host knows. */
+static void elapse(int64_t seconds) {
+  if (stopped_clock() || seconds <= 0) {
+    return;
+  }
+  for (int64_t days = seconds / SECONDS_PER_DAY; days > 0; --days) {
+    day();
+  }
+  for (int64_t rest = seconds % SECONDS_PER_DAY; rest > 0; --rest) {
+    second();
+  }
 }
 
 void rtc_reset(void) {
-  memset(base, 0, sizeof(base));
+  memset(now, 0, sizeof(now));
   memset(latched, 0, sizeof(latched));
-  since = host_clock();
+  fraction = UNKNOWN_FRACTION;
 }
 
-void rtc_latch(void) { present(latched); }
+void rtc_latch(void) { memcpy(latched, now, sizeof(latched)); }
 
 uint8_t rtc_read(int reg) { return latched[reg]; }
 
+/* Setting the seconds starts the second over. */
 void rtc_write(int reg, uint8_t value) {
-  /* bring the clock up to now, and carry on from there with the new value */
-  uint8_t now[RTC_REGISTERS];
-  present(now);
-  memcpy(base, now, sizeof(base));
-  since = host_clock();
-  base[reg] = value & register_mask[reg];
+  now[reg] = value & register_mask[reg];
+  if (reg == RTC_SECONDS) {
+    fraction = 0;
+  }
 }
 
 void rtc_save(uint8_t *state) {
-  memcpy(state, base, RTC_REGISTERS);
-  uint64_t stamp = (uint64_t)since;
+  memcpy(state, now, RTC_REGISTERS);
+  uint64_t stamp = (uint64_t)host_clock();
   for (int i = 0; i < TIME_BYTES; ++i) {
     state[STATE_TIME + i] = (uint8_t)(stamp >> (i * CHAR_BIT));
   }
@@ -111,8 +148,11 @@ void rtc_load(const uint8_t *state) {
     stamp |= (uint64_t)state[STATE_TIME + i] << (i * CHAR_BIT);
   }
   for (int reg = 0; reg < RTC_REGISTERS; ++reg) {
-    base[reg] = state[reg] & register_mask[reg];
+    now[reg] = state[reg] & register_mask[reg];
   }
-  since = (int64_t)stamp;
-  present(latched);
+  fraction = UNKNOWN_FRACTION;
+  if (stamp != 0) { /* saved with a host clock to go by */
+    elapse(host_clock() - (int64_t)stamp);
+  }
+  rtc_latch();
 }
