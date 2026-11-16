@@ -53,6 +53,10 @@ static uint8_t pause = PAUSE_NONE;
 /* interrupts raised too late in a halted M-cycle for the CPU to wake at the end of it */
 static uint8_t halt_missed = 0;
 
+/* T-cycles of the normal speed that the step under way has taken: counted an M-cycle at a time, as the speed can */
+/* change partway through a step */
+static uint32_t step_ticks = 0;
+
 /* T-cycles the PPU has still to run. It's kept up to an M-cycle behind the rest, and caught up before anything looks */
 /* at it, so that a write to one of its registers can land partway through the M-cycle before, as the real ones do. */
 static uint32_t video_owed = 0;
@@ -75,6 +79,7 @@ static void run_machine(uint32_t cycles) {
     if (!doctor) {
       video_owed += M_CYCLE >> double_speed;
     }
+    step_ticks += M_CYCLE >> double_speed;
     if (cpu_switching && --cpu_switching == 0) {
       io_speed_switch(1);
     }
@@ -355,6 +360,7 @@ static uint32_t speed_wake(void) {
 }
 
 uint32_t step(void) {
+  step_ticks = 0;
   if (stopped) {
     /* nothing runs, but time passes */
     cycle_counter += M_CYCLE;
@@ -397,10 +403,9 @@ uint32_t step(void) {
     run_machine(M_CYCLE);
     bus_sync();
     cycle_counter += M_CYCLE;
-    return M_CYCLE >> double_speed;
+    return step_ticks;
   }
   uint64_t start = cycle_counter;
-  uint8_t speed = double_speed; /* which a STOP can change, once its own M-cycles have run */
   bus_cycles = 0;
   if (!halted) {
     bus_dma();
@@ -433,7 +438,7 @@ uint32_t step(void) {
   }
   bus_sync();
   /* double speed is only for the CPU and what runs off its clock (DIV, the timer, serial); the rest keeps time */
-  return cycles >> speed;
+  return step_ticks;
 }
 
 int cpu_bios_init(void) {

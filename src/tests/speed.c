@@ -44,6 +44,7 @@ enum {
   FOURTH_STOP = 0x0400, /* these three have an INC A after them */
   FIFTH_STOP = 0x0500,
   SIXTH_STOP = 0x0600,
+  SEVENTH_STOP = 0x0700, /* and this one an LD A, 0 */
   STOP_GAP = 0x0100,
   P1 = 0xFF00,
   P1_BUTTONS = 0x10, /* written to P1: the buttons' line selected, the directions' not */
@@ -99,6 +100,8 @@ int main(void) {
     rom[stop] = 0x10;
     rom[stop + 1] = 0x3C; /* INC A */
   }
+  rom[SEVENTH_STOP] = 0x10;
+  rom[SEVENTH_STOP + 1] = 0x3E; /* LD A, 0 */
   struct gb *gb = test_boot(GB_CGB_AUTO, rom, TEST_ROM_SIZE, NULL);
   CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
 
@@ -193,6 +196,14 @@ int main(void) {
   CHECK(accumulator(gb) == (uint8_t)(a + 2));
   CHECK(gb_read(gb, KEY1) == KEY1_NORMAL);
   CHECK(gb_read(gb, DIV) == 0);
+
+  /* the same going to double speed, with a 2 M-cycle LD A after the STOP: its first M-cycle is at the old speed */
+  /* and its second at the new, and the ticks are counted so */
+  gb_write(gb, KEY1, KEY1_ARMED);
+  run_to(gb, SEVENTH_STOP);
+  CHECK(gb_step(gb) == M_CYCLE);
+  CHECK(gb_step(gb) == M_CYCLE + M_CYCLE / 2);
+  CHECK(gb_read(gb, KEY1) == KEY1_DOUBLE);
 
   gb_destroy(gb);
   free(rom);
