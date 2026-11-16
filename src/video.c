@@ -49,9 +49,13 @@
 /* - A write to BGP, OBP0 or OBP1 lands a dot before the end of its M-cycle on a CGB C and two on a CGB D. */
 /* */
 /* Where it's known to differ from the hardware, or is a guess: */
-/* - The OAM bug isn't emulated: on a DMG, a 16-bit INC or DEC (and some other instructions) of a register pointing */
-/*   into FE00-FEFF during the OAM scan corrupts OAM. Blargg's oam_bug 2, 4, 5 and 8 fail for it; it needs the CPU's */
-/*   instructions to tell the PPU. */
+/* - The DMG's OAM corruption is one console's: DocBoy's, whose 268 tests of it list all of OAM after an instruction */
+/*   at each moment of the scan (264 pass), with Blargg's oam_bug tests agreeing as far as they go. A read's effect */
+/*   on every 4th row is said to differ between consoles. Not done: a write to a row's third word in the M-cycle */
+/*   the scan starts in, where DocBoy's tables have a few cases more, some of them marked as unsteady; */
+/*   what the CPU's read gets back from a spoiled row; and OAM DMA running at the time, when nothing is spoiled */
+/*   here. That the scan misses the objects of a spoiled row is from two tests, which only say it doesn't see the */
+/*   row as spoiled. */
 /* - Either CGB, by what still fails of its evidence: mode 3 writes to SCX, SCY, LCDC's map and tile data bits and */
 /*   the object bits (mealybug's pictures; of the tile data glitch only one case is done, a tile index under 128 */
 /*   read as its own row, and about 110 of DocBoy's pictures are of it); the window and LYC being switched on and */
@@ -85,9 +89,9 @@
 /*   picture from a DMG-CPU B. */
 /* - The window at WX 166 only moves its line counter (DMG); the real one's is said to start during HBlank. WY is */
 /*   compared twice a line (as the pixels start, and near the line's end), where the hardware may do it more often. */
-/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1541 of 1651, and 10 of 14): some of the */
+/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1541 of 1651, and 11 of 14): some of the */
 /*   window's and mode 1's cases, AGE's m3-bg-scx picture and a 2-pixel difference in its m3-bg-bgp, and its */
-/*   stat-mode-sprites and oam-write. */
+/*   stat-mode-sprites. */
 /* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
 /*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and at double speed which */
 /*   half of the M-cycle it is, is a guess. Gambatte's late_sp results, of an object changed by DMA as the scan */
@@ -355,6 +359,7 @@ struct ppu {
   /* where it's got to */
   uint16_t dot;        /* the next of the line's to run */
   uint8_t line;        /* which LY follows, but for the last line */
+  uint32_t spoiled;    /* DMG: a bit for each row of OAM that the CPU spoiled with this line's scan on it */
   uint8_t first_line;  /* the LCD's just come on: no OAM scan, and mode 0 until the drawing */
   uint8_t late;        /* dots that line's drawing is put back */
   uint8_t drawing;     /* the pixels are going */
@@ -695,7 +700,15 @@ static uint8_t oam_peek(int address) {
   return oam[address];
 }
 
+enum {
+  OAM_ROW = 8, /* bytes of OAM that are read and spoiled together: a pair of objects */
+};
+
 static void scan_object(int index) {
+  if (p.spoiled >> (index * OBJ_BYTES / OAM_ROW) & 1) {
+    /* the scan doesn't get to read a row that the CPU's address spoils (below) */
+    return;
+  }
   uint8_t y = oam_peek(index * OBJ_BYTES + OBJ_Y);
   uint8_t x = oam_peek(index * OBJ_BYTES + OBJ_X);
   int height = TILE_SIZE;
@@ -720,6 +733,152 @@ static void scan_object(int index) {
   p.object_y[at] = y;
   p.object_index[at] = index;
   ++p.objects;
+}
+
+/* **************************************** */
+/* The DMG's OAM corruption */
+
+/* While a DMG's PPU scans OAM, an address from FE00 to FEFF on the CPU's bus upsets OAM's own address lines, and */
+/* what's stored gets mixed. OAM is read 16 bits at a time and is laid out in rows of 8 bytes, a pair of objects; */
+/* the scan spends an M-cycle on each row, and what the CPU's M-cycle spoils is the row the scan is on, from the row */
+/* before it. It's the address that does it: an M-cycle the CPU only counts a register in spoils as a write does, */
+/* and the write itself doesn't land. */
+/*   What a write does is as Pan Docs has it. The rest is read from DocBoy's tests of it, which list all of OAM */
+/* after one instruction at each moment of the scan: reads, which spoil up to five rows by where the scan is, and */
+/* the two M-cycles at the scan's ends, where the CPU's own access gets through and its row is mixed with the */
+/* scan's. What a read on rows 4, 8, 12 and 16 does is said to differ from one console to the next; this is the one */
+/* DocBoy's were measured on. Blargg's oam_bug tests, from another console, pass with it. */
+/*   The scan itself doesn't see the pair of objects in a row spoiled under it: DocBoy's oam_scan_blocked_by tests */
+/* have an object that the spoiling copies into the next row, and the line is drawn with the one. */
+enum {
+  OAM_ROWS = OAM_SIZE / OAM_ROW,
+  OAM_WORD = 2,
+  OAM_WORDS = OAM_ROW / OAM_WORD,
+  OAM_LAST_ROW = OAM_ROWS - 1,
+  OAM_SCAN_WORD = 2,  /* the second object of a row, which the scan read last */
+  OAM_LAST_WORD = 3,  /* a row's last behaves unlike the others after the scan */
+  OAM_ROW_GROUP = 4,  /* a read on every 4th row reaches back 4 rows, */
+  OAM_ROW_OCTAVE = 8, /* and on every 8th, to the first row as well */
+};
+
+static force_inline uint16_t oam_word(int row, int word) {
+  const uint8_t *at = oam + row * OAM_ROW + word * OAM_WORD;
+  return at[0] | at[1] << 8;
+}
+
+static force_inline void oam_set_word(int row, int word, uint16_t value) {
+  uint8_t *at = oam + row * OAM_ROW + word * OAM_WORD;
+  at[0] = value & 0xFF;
+  at[1] = value >> 8;
+}
+
+static void oam_copy_row(int to, int from) { memmove(oam + to * OAM_ROW, oam + from * OAM_ROW, OAM_ROW); }
+
+/* all of a row but its first word */
+static void oam_copy_rest(int to, int from) {
+  memmove(oam + to * OAM_ROW + OAM_WORD, oam + from * OAM_ROW + OAM_WORD, OAM_ROW - OAM_WORD);
+}
+
+/* each bit as two of the three have it */
+static force_inline uint16_t majority(uint16_t a, uint16_t b, uint16_t c) { return (a & b) | (a & c) | (b & c); }
+
+/* a write, or an address alone, with the scan on a row after the first */
+static void oam_spoil_write(int row) {
+  oam_set_word(row, 0, majority(oam_word(row, 0), oam_word(row - 1, 0), oam_word(row - 1, OAM_SCAN_WORD)));
+  oam_copy_rest(row, row - 1);
+}
+
+/* and a read */
+static void oam_spoil_read(int row) {
+  if (row & 1) {
+    uint16_t mine = oam_word(row, 0);
+    uint16_t before = oam_word(row - 1, 0);
+    oam_set_word(row, 0, before | (mine & oam_word(row - 1, OAM_SCAN_WORD)));
+    oam_copy_rest(row, row - 1);
+    oam_copy_row(row - 1, row);
+    return;
+  }
+  /* on an even row it's the row before that is mixed, from both its neighbours, and they take what it gets */
+  uint16_t a = oam_word(row - 2, 0);
+  uint16_t b = oam_word(row - 1, 0);
+  uint16_t c = oam_word(row, 0);
+  uint16_t d = oam_word(row - 1, OAM_SCAN_WORD);
+  oam_set_word(row - 1, 0, (b & (a | c | d)) | (a & c & d));
+  oam_copy_row(row - 2, row - 1);
+  oam_copy_row(row, row - 1);
+  if (row % OAM_ROW_GROUP == 0) {
+    oam_copy_row(row - OAM_ROW_GROUP, row - 1);
+    if (row % OAM_ROW_OCTAVE == 0) {
+      oam_copy_row(0, row - 1);
+    }
+  }
+}
+
+/* The M-cycle the scan starts in: the CPU's read or write is done before the PPU takes OAM, and the scan's first */
+/* row is then mixed with the row the CPU was at. */
+static void oam_spoil_first(uint8_t at, uint8_t access, uint8_t value) {
+  uint8_t last = oam[OAM_ROW - 1];
+  if (access == ACCESS_WRITE) {
+    oam[at] = value;
+  }
+  int row = at / OAM_ROW;
+  int word = at % OAM_ROW / OAM_WORD;
+  oam_set_word(0, 0, majority(oam_word(0, 0), oam_word(row, 0), oam_word(row, word)));
+  oam_copy_rest(0, row);
+  if (access == ACCESS_WRITE && at % OAM_ROW == OAM_ROW - 1) {
+    /* a write to a row's last byte only sets bits in the first row's */
+    oam[OAM_ROW - 1] |= last;
+  }
+}
+
+/* The M-cycle after the scan's last row, when a DMG's OAM is the CPU's again for a moment: the CPU's row takes the */
+/* last row, but for the word the CPU is at, which is mixed with it. A write lands after that; a read leaves the */
+/* last row the same as the CPU's. */
+static void oam_spoil_after(uint8_t at, uint8_t access) {
+  int row = at / OAM_ROW;
+  int word = at % OAM_ROW / OAM_WORD;
+  uint16_t mine = oam_word(row, word);
+  uint16_t beside = oam_word(row, OAM_SCAN_WORD);
+  uint16_t scanned = oam_word(OAM_LAST_ROW, OAM_SCAN_WORD);
+  oam_copy_row(row, OAM_LAST_ROW);
+  if (word == OAM_LAST_WORD && access == ACCESS_READ) {
+    oam_set_word(row, word, oam_word(OAM_LAST_ROW, word) | (mine & scanned));
+  } else {
+    oam_set_word(row, word, majority(mine, oam_word(OAM_LAST_ROW, word), scanned));
+    if (word == OAM_LAST_WORD) {
+      oam_set_word(row, OAM_SCAN_WORD, majority(beside, scanned, oam_word(row, word)));
+    }
+  }
+  if (access == ACCESS_READ) {
+    oam_copy_row(OAM_LAST_ROW, row);
+  }
+}
+
+/* The CPU has an address from FE00 to FEFF on its bus for the M-cycle that's starting. */
+void video_oam_bug(uint16_t address, uint8_t access, uint8_t value) {
+  if (cgb || doctor || !(IO_REG(IO_LCDC) & LCDC_ENABLE) || p.first_line || p.line >= LCD_HEIGHT) {
+    return;
+  }
+  if (p.dot < M_CYCLE_DOT || p.dot > DOT_DRAWING) {
+    return;
+  }
+  int row = (p.dot - M_CYCLE_DOT) / M_CYCLE;
+  uint8_t at = address - OAM_START;
+  if (row > 0 && row < OAM_ROWS) {
+    p.spoiled |= 1 << row;
+    if (access == ACCESS_READ) {
+      oam_spoil_read(row);
+    } else {
+      oam_spoil_write(row);
+    }
+  } else if (access != ACCESS_IDLE && at < OAM_SIZE) {
+    /* at the scan's ends it takes an access, and one that's inside OAM */
+    if (row == 0) {
+      oam_spoil_first(at, access, value);
+    } else {
+      oam_spoil_after(at, access);
+    }
+  }
 }
 
 /* **************************************** */
@@ -1172,6 +1331,7 @@ static void line_dot(void) {
     p.irq_mode = IRQ_NONE;
     stat_update();
     p.objects = 0;
+    p.spoiled = 0;
   } else if (d >= DOT_SCAN_FIRST && d <= DOT_DRAWING && (d - DOT_SCAN_FIRST) % DOT_SCAN_EACH == 0) {
     scan_object((d - DOT_SCAN_FIRST) / DOT_SCAN_EACH);
     if (d == DOT_SCAN_RELEASE && !cgb) {

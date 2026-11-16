@@ -230,9 +230,9 @@ void LD_ann_SP(void) {
   bus_write(address + 1, r.SP >> 8);
 }
 
-/* an M-cycle of its own first, then the high byte, then the low */
+/* an M-cycle to count SP down first, then the high byte, then the low */
 static force_inline void PUSH16(uint16_t n) {
-  bus_idle();
+  bus_count(r.SP);
   bus_write(--r.SP, n >> 8);
   bus_write(--r.SP, n & 0xFF);
 }
@@ -550,21 +550,32 @@ void ADD_SP_n(void) {
   r.SP = (uint16_t)(r.SP + n);
 }
 
-void INC_BC(void) { r.BC += 1; }
+/* The count takes an M-cycle, with the register on the address lines. */
+static force_inline void INC16(uint16_t *n) {
+  bus_count(*n);
+  *n += 1;
+}
 
-void INC_DE(void) { r.DE += 1; }
+static force_inline void DEC16(uint16_t *n) {
+  bus_count(*n);
+  *n -= 1;
+}
 
-void INC_HL(void) { r.HL += 1; }
+void INC_BC(void) { INC16(&r.BC); }
 
-void INC_SP(void) { r.SP += 1; }
+void INC_DE(void) { INC16(&r.DE); }
 
-void DEC_BC(void) { r.BC -= 1; }
+void INC_HL(void) { INC16(&r.HL); }
 
-void DEC_DE(void) { r.DE -= 1; }
+void INC_SP(void) { INC16(&r.SP); }
 
-void DEC_HL(void) { r.HL -= 1; }
+void DEC_BC(void) { DEC16(&r.BC); }
 
-void DEC_SP(void) { r.SP -= 1; }
+void DEC_DE(void) { DEC16(&r.DE); }
+
+void DEC_HL(void) { DEC16(&r.HL); }
+
+void DEC_SP(void) { DEC16(&r.SP); }
 
 /* **************************************** */
 /* Rotates & Shifts */

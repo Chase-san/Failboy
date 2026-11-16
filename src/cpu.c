@@ -123,15 +123,26 @@ static void bus_dma(void) {
   bus_cycles += cycles;
 }
 
+/* DMG: an address inside or just after OAM, out on the bus for the M-cycle that's starting, spoils OAM if the PPU is */
+/* scanning it (video.c). OAM DMA's own don't, and nor does the CPU's while DMA has the bus. */
+static force_inline void bus_oam(uint16_t address, uint8_t access, uint8_t value) {
+  if (!cgb && address >= OAM_START && address < IO_P1) {
+    video_oam_bug(address, access, value);
+  }
+}
+
 uint8_t bus_read(uint16_t address) {
   uint8_t value;
   bus_sync();
   if (io_dma_conflict(address)) {
     value = io_dma_read(address);
-  } else if (video_locked(address, 0)) {
-    value = BUS_LOCKED;
   } else {
-    value = mem_read(io_dma_wram(address));
+    bus_oam(address, ACCESS_READ, 0);
+    if (video_locked(address, 0)) {
+      value = BUS_LOCKED;
+    } else {
+      value = mem_read(io_dma_wram(address));
+    }
   }
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
@@ -149,8 +160,11 @@ void bus_write(uint16_t address, uint8_t value) {
   video_owed = lead;
   if (io_dma_conflict(address)) {
     io_dma_write(address, value);
-  } else if (!video_locked(address, 1)) {
-    mem_write(io_dma_wram(address), value);
+  } else {
+    bus_oam(address, ACCESS_WRITE, value);
+    if (!video_locked(address, 1)) {
+      mem_write(io_dma_wram(address), value);
+    }
   }
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
@@ -158,6 +172,16 @@ void bus_write(uint16_t address, uint8_t value) {
 
 /* an M-cycle the CPU spends on its own, before an access that has to wait for it */
 void bus_idle(void) {
+  run_machine(M_CYCLE);
+  bus_cycles += M_CYCLE;
+}
+
+/* and one it spends counting a 16-bit register up or down, with the register on the address lines */
+void bus_count(uint16_t address) {
+  bus_sync();
+  if (address >= OAM_START && !io_dma_conflict(address)) {
+    bus_oam(address, ACCESS_IDLE, 0);
+  }
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
 }
@@ -331,7 +355,7 @@ static void cpu_interrupt(void) {
   /* Two M-cycles of waiting, then PC's high byte is pushed, and can land on IE (with SP at 0000); only then is the */
   /* interrupt picked, so it can be another one, or none at all, which leaves PC at 0000. */
   bus_idle();
-  bus_idle();
+  bus_count(r.SP);
   bus_write(--r.SP, r.PC >> 8);
   bus_sync();
   pending = IO_REG(IO_IF) & io_ie & INT_ALL;

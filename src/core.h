@@ -174,6 +174,10 @@ void video_dma_byte(void);           /* and copies one */
 const uint16_t *video_pixels(void);  /* LCD_WIDTH * LCD_HEIGHT: a DMG's shades, 0 (lightest) to 3, or a CGB's colors */
 uint32_t video_frames(void);         /* frames finished so far; one more each time VBlank starts */
 
+/* DMG: an address from FE00 to FEFF on the CPU's bus spoils OAM while the PPU scans it; an ACCESS_ kind, and the */
+/* byte that a write has */
+void video_oam_bug(uint16_t, uint8_t, uint8_t);
+
 /* audio.c */
 enum {
   AUDIO_START = 0xFF10,                        /* NR10, the first sound register */
@@ -295,10 +299,20 @@ int cpu_bios_init(void); /* everything as the boot ROM leaves it; 0 if the compi
 uint32_t step(void);     /* runs one instruction (or interrupt/halt cycle), returns T-cycles at the normal speed */
 
 /* the CPU's memory accesses, each an M-cycle that the rest of the machine runs through; bus_idle() is one of the */
-/* CPU's own, without an access. The PPU's share of an M-cycle is held back until the next access, or bus_sync(). */
+/* CPU's own, without an access, and bus_count() one it spends counting a 16-bit register up or down, which is on */
+/* the address lines meanwhile. The PPU's share of an M-cycle is held back until the next access, or bus_sync(). */
 uint8_t bus_read(uint16_t);
 void bus_write(uint16_t, uint8_t);
 void bus_idle(void);
+void bus_count(uint16_t);
+
+/* what the CPU does with the address it has out for an M-cycle */
+enum {
+  ACCESS_IDLE,
+  ACCESS_READ,
+  ACCESS_WRITE,
+};
+
 void bus_sync(void); /* catches the PPU up, for looking at what it does (IF, say) without an access */
 
 #endif /* _CORE_H_ */
