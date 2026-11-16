@@ -107,18 +107,23 @@ void bus_idle(void) {
   bus_cycles += M_CYCLE;
 }
 
-/* An M-cycle of HALT. The halted CPU looks for interrupts halfway through it, so one the PPU raises in the second */
-/* half doesn't wake it until the next. That's fitted to a DMG (Mooneye's hblank_ly_scx_timing and intr_2 tests want */
-/* it); a CGB is given the same, at either speed. Only the PPU's interrupts are */
-/* held to it: the timer's and serial port's come at the end of an M-cycle and wake the CPU there, as before. */
+/* An M-cycle of HALT. A halted DMG looks for interrupts halfway through it, so one the PPU raises in the second */
+/* half doesn't wake it until the next (Mooneye's hblank_ly_scx_timing and intr_2 tests want that), and nor does the */
+/* timer's or the serial port's, which come at the M-cycle's end. A halted CGB looks as the M-cycle starts, at either */
+/* speed, so nothing raised during it wakes it before the next. DocBoy's tests of interrupts in HALT and Gambatte's */
+/* results agree on both. */
 static void halt_cycle(void) {
-  uint8_t before;
+  uint8_t start = IO_REG(IO_IF);
   run_machine(M_CYCLE);
+  uint8_t late = IO_REG(IO_IF) & ~start; /* the timer's and the serial port's */
   video_tick(video_owed / 2);
-  before = IO_REG(IO_IF);
+  uint8_t halfway = IO_REG(IO_IF);
   video_tick(video_owed - video_owed / 2);
   video_owed = 0;
-  halt_missed = IO_REG(IO_IF) & ~before;
+  halt_missed = late | (IO_REG(IO_IF) & ~halfway);
+  if (cgb) {
+    halt_missed = IO_REG(IO_IF) & ~start;
+  }
 }
 
 void NOP(void) {}
