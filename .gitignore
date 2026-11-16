@@ -30,6 +30,7 @@ ref/*
 
 # CMake
 build*/
+build-release/
 CMakeUserPresets.json
 
 # clangd
@@ -37,6 +38,7 @@ CMakeUserPresets.json
 
 # test ROMs (see tests/roms/SOURCE.txt)
 tests/roms/
+tests/
 
 # =========================
 # Operating System Files
