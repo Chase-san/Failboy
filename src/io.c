@@ -78,6 +78,7 @@ enum {
   DMA_IDLE = OAM_SIZE,  /* dma_next with no transfer going */
   DMA_START_CYCLES = 2, /* M-cycles from the write until OAM is taken; the first byte comes the M-cycle after */
   OAM_BUSY = 0xFF,      /* what the CPU reads from OAM meanwhile */
+  WRAM_HALF = 0x1000,   /* the address line that picks C000-CFFF or D000-DFFF */
 };
 
 /* the buses, as far as OAM DMA is concerned */
@@ -94,6 +95,8 @@ static int dma_bus = BUS_EXTERNAL; /* the one dma_source is on */
 static int dma_next = DMA_IDLE;
 static uint16_t dma_restart = 0; /* the source written, starting when dma_starting runs out */
 static int dma_starting = 0;
+static int dma_fought = 0;          /* the CPU drove DMA's bus this M-cycle, */
+static uint8_t dma_fought_with = 0; /* with this */
 
 /* JOYPAD_* buttons held down */
 static uint8_t joypad = 0;
@@ -110,6 +113,7 @@ void io_reset(void) {
   dma_next = DMA_IDLE;
   dma_restart = 0;
   dma_starting = 0;
+  dma_fought = 0;
   joypad = 0;
 }
 
@@ -247,12 +251,70 @@ int io_dma_conflict(uint16_t address) {
   return bus == BUS_OAM || bus == dma_bus;
 }
 
+/* The byte DMA finds at its source. From E000 up a DMG's finds work RAM again, as the CPU does up to FDFF; a CGB's */
+/* finds nothing there, and reads FF. */
+static uint8_t dma_source_byte(void) {
+  uint16_t address = dma_source + dma_next;
+  if (address >= ECHO_START) {
+    if (cgb) {
+      return OPEN_BUS;
+    }
+    address -= ECHO_START - WRAM_START;
+  }
+  return mem_read(address);
+}
+
+/* the bus a DMA from there reads: from E000 up it's the external one, whatever the CPU finds there */
+static int dma_bus_of(uint16_t source) {
+  if (source >= ECHO_START) {
+    return BUS_EXTERNAL;
+  }
+  return bus_of(source);
+}
+
+/* a CGB's VRAM bus gives DMA 00 when the CPU is on it too, reading or writing */
+static void dma_fight_vram(void) {
+  if (cgb && dma_bus == BUS_VRAM) {
+    dma_fought = 1;
+    dma_fought_with = 0;
+  }
+}
+
 uint8_t io_dma_read(uint16_t address) {
   if (bus_of(address) == BUS_OAM) {
     return OAM_BUSY;
   }
   /* the byte DMA reads this M-cycle */
-  return mem_read(dma_source + dma_next);
+  uint8_t value = dma_source_byte();
+  dma_fight_vram();
+  return value;
+}
+
+/* The CPU writes while DMA has the bus: nothing is written where the CPU meant, and DMA reads what the CPU put on */
+/* the bus in place of its source's byte; but work RAM on a DMG answers as well, and DMA gets the two ANDed. A */
+/* CGB's work RAM, on a bus of its own, just gives DMA its byte. */
+void io_dma_write(uint16_t address, uint8_t value) {
+  if (bus_of(address) == BUS_OAM || dma_bus == BUS_WRAM) {
+    return;
+  }
+  dma_fought = 1;
+  dma_fought_with = value;
+  if (!cgb && dma_source >= WRAM_START) {
+    dma_fought_with &= dma_source_byte();
+  }
+  dma_fight_vram();
+}
+
+/* CGB: where the CPU's access to work RAM really goes while DMA reads the external bus. Work RAM's top address */
+/* line follows DMA's address then, so the half the CPU gets (C000 or D000) is the one DMA's address would pick. */
+uint16_t io_dma_wram(uint16_t address) {
+  if (!cgb || dma_next == DMA_IDLE || dma_bus != BUS_EXTERNAL || bus_of(address) != BUS_WRAM) {
+    return address;
+  }
+  if (address >= ECHO_START) {
+    address -= ECHO_START - WRAM_START;
+  }
+  return (address & ~WRAM_HALF) | ((dma_source + dma_next) & WRAM_HALF);
 }
 
 /* the byte of OAM that DMA wrote in the M-cycle just run, or -1 with none going */
@@ -265,13 +327,17 @@ int io_dma_byte(void) {
 
 static void dma_cycle(void) {
   if (dma_next < DMA_IDLE) {
-    oam[dma_next] = mem_read(dma_source + dma_next);
+    oam[dma_next] = dma_source_byte();
+    if (dma_fought) {
+      oam[dma_next] = dma_fought_with;
+    }
     ++dma_next;
   }
+  dma_fought = 0;
   /* a (re)start takes over at the end of the M-cycle, and copies from the next */
   if (dma_starting && --dma_starting == 0) {
     dma_source = dma_restart;
-    dma_bus = bus_of(dma_source);
+    dma_bus = dma_bus_of(dma_source);
     dma_next = 0;
   }
 }
@@ -375,12 +441,8 @@ void io_write(uint16_t address, uint8_t value) {
       IO_REG(IO_IF) = value & INT_ALL;
       break;
     case IO_DMA:
-      /* from E000 up it reads work RAM, as echo RAM does */
       IO_REG(IO_DMA) = value;
       source = value << 8;
-      if (source >= ECHO_START) {
-        source -= ECHO_START - WRAM_START;
-      }
       dma_restart = source;
       dma_starting = DMA_START_CYCLES;
       break;

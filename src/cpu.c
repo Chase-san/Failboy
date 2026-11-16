@@ -108,7 +108,7 @@ uint8_t bus_read(uint16_t address) {
   } else if (video_locked(address, 0)) {
     value = BUS_LOCKED;
   } else {
-    value = mem_read(address);
+    value = mem_read(io_dma_wram(address));
   }
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
@@ -124,8 +124,10 @@ void bus_write(uint16_t address, uint8_t value) {
   }
   video_tick(video_owed - lead);
   video_owed = lead;
-  if (!io_dma_conflict(address) && !video_locked(address, 1)) {
-    mem_write(address, value);
+  if (io_dma_conflict(address)) {
+    io_dma_write(address, value);
+  } else if (!video_locked(address, 1)) {
+    mem_write(io_dma_wram(address), value);
   }
   run_machine(M_CYCLE);
   bus_cycles += M_CYCLE;
