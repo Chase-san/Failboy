@@ -41,6 +41,15 @@ enum {
   BUS_LOCKED = 0xFF, /* what a read of VRAM or OAM gets while the PPU has it */
 };
 
+/* where the wait after a speed switch has got to */
+enum {
+  PAUSE_NONE,
+  PAUSE_RUNNING,
+  PAUSE_ENDING, /* an interrupt has cut it short */
+};
+
+static uint8_t pause = PAUSE_NONE;
+
 /* interrupts raised too late in a halted M-cycle for the CPU to wake at the end of it */
 static uint8_t halt_missed = 0;
 
@@ -335,15 +344,34 @@ static void cpu_interrupt(void) {
   cycle_counter += 5 << M_CYCLE_SHL;
 }
 
+/* T-cycles of the normal speed that the CPU still waits once an interrupt has cut a speed switch's wait short: an */
+/* M-cycle of the double speed, or on a CGB C coming back to the normal speed, an M-cycle of that. DocBoy's tests */
+/* (a CGB E's) have the first; AGE has a test apiece for the two revisions, and the C's wants the second. */
+static uint32_t speed_wake(void) {
+  if (!cgb_e && !double_speed) {
+    return M_CYCLE;
+  }
+  return M_CYCLE / 2;
+}
+
 uint32_t step(void) {
   if (stopped) {
     /* nothing runs, but time passes */
     cycle_counter += M_CYCLE;
     return M_CYCLE;
   }
-  if (cpu_paused && (IO_REG(IO_IF) & io_ie & INT_ALL)) {
-    /* an interrupt cuts the wait after a speed switch short, as it ends a HALT */
+  /* An interrupt cuts the wait after a speed switch short, as it ends a HALT. One that's there as the wait begins */
+  /* ends it at once; one that comes later, after a little more of it (speed_wake()). */
+  uint8_t waiting = (IO_REG(IO_IF) & io_ie & INT_ALL) != 0;
+  if (!cpu_paused) {
+    pause = PAUSE_NONE;
+  } else if (pause == PAUSE_NONE && waiting) {
     cpu_paused = 0;
+  } else if (pause != PAUSE_ENDING && waiting) {
+    cpu_paused = speed_wake();
+    pause = PAUSE_ENDING;
+  } else if (pause == PAUSE_NONE) {
+    pause = PAUSE_RUNNING;
   }
   if (cpu_paused) {
     /* Waiting out a speed switch, an M-cycle at a time, the rest of the machine carrying on without the CPU. The */
@@ -442,6 +470,7 @@ int cpu_bios_init(void) {
   r.SP = 0xFFFE;
   ime = ei_delay = halted = halt_bug = stopped = double_speed = cpu_locked = 0;
   cpu_paused = 0;
+  pause = PAUSE_NONE;
   cpu_switching = 0;
   cycle_counter = 0;
   bus_cycles = 0;
