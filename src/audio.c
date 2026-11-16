@@ -93,6 +93,8 @@ enum {
   SQUARE_STEPS = 8,
   WAVE_SAMPLES = 32,
   WAVE_TRIGGER_DELAY = 6, /* T-cycles a triggered wave channel waits on top of its period before its first step */
+  WAVE_CORRUPT_AT = 2,    /* DMG: a trigger this many T-cycles before the channel's next read corrupts wave RAM */
+  WAVE_CORRUPT_GROUP = 4,
   WAVE_ACCESS_WINDOW = 2, /* DMG: T-cycles after the wave channel reads a byte in which the CPU can get at it too */
   TIMER_PERIOD_ZERO = 8, /* the sweep and envelope timers count a period of 0 as 8 */
   LFSR_RESET = 0x7FFF,
@@ -295,9 +297,26 @@ static void clock_envelope(int ch) {
   }
 }
 
+/* DMG: triggering the wave channel just as it's about to read its next byte writes over the start of wave RAM. If */
+/* the byte is one of the first four, it lands on the first; if not, its aligned group of four lands on the first */
+/* four. */
+static void corrupt_wave(void) {
+  int next = ((channels[WAVE].position + 1) % WAVE_SAMPLES) / 2;
+  if (next < WAVE_CORRUPT_GROUP) {
+    IO_REG(WAVE_RAM) = IO_REG(WAVE_RAM + next);
+    return;
+  }
+  for (int i = 0; i < WAVE_CORRUPT_GROUP; ++i) {
+    IO_REG(WAVE_RAM + i) = IO_REG(WAVE_RAM + (next & ~(WAVE_CORRUPT_GROUP - 1)) + i);
+  }
+}
+
 /* NRx4 bit 7 restarts the channel; extra_clock is write_control()'s. */
 static void trigger(int ch, int extra_clock) {
   struct channel *c = &channels[ch];
+  if (ch == WAVE && !cgb && c->on && c->timer == WAVE_CORRUPT_AT) {
+    corrupt_wave();
+  }
   c->on = dac_on(ch) != 0; /* with its DAC off it stops again right away */
   if (c->length == 0) {
     c->length = full_length(ch);
