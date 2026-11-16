@@ -60,7 +60,11 @@
 /*   offset1_lyc8fint_m1stat_ds_1, and enable_display's ly0_late_scx7_m3stat_scx0_2. Nothing on a CGB E. */
 /* - Three of the shootout battery's CGB tests fail as either revision: cgb-acid-hell (which DocBoy's author says */
 /*   fails on a real CGB-E too), daid's ppu_scanline_bgp on a GBC and its speed_switch_timing_ly. They once passed */
-/*   with numbers fitted to them, which both revisions' evidence contradicts. */
+/*   with three numbers fitted to them. Two of those, the PPU running 2 dots ahead of the CPU and its pixels */
+/*   starting 2 dots sooner, both revisions' evidence contradicts; the third, palette writes landing 2 dots early, */
+/*   is what a CGB E's has since asked for. */
+/* - That a CGB C's edges go unseen at double speed (dmg_edges()) is what Gambatte's results ask for, not a known */
+/*   mechanism: it may be when a CPU at that speed reads, and not the PPU doing anything else. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
 /* - A DMG's write to STAT doesn't switch all its interrupt sources on for a moment, as the real one's does. */
 /* - A window starting a pixel late (window_check) puts the LCD a pixel out of step with the PPU on some DMGs. It */
@@ -135,8 +139,8 @@ enum {
   DOT_WINDOW_Y = 454,    /* a second look at WY, the first being as the pixels start */
   DOT_VBLANK_COMPARE = 1,
   DOT_VBLANK = 2,       /* on line 144: mode 1, and the interrupt */
-  DOT_LAST_ZERO = 3,    /* on line 153: a DMG's LY reads 0 from here, though compared as 153 */
-  DOT_LAST_NONE = 5,    /* then as nothing (here a CGB's LY goes to 0, still compared as 153) */
+  DOT_LAST_ZERO = 3,    /* on line 153: LY reads 0 from here where a DMG's edges show, though compared as 153 */
+  DOT_LAST_NONE = 5,    /* then as nothing, bar a CGB E's (and LY reads 0 from here where they don't show) */
   DOT_LAST_COMPARE = 9, /* and then as 0 */
   NO_DOT = 0xFFFF,
   LAST_LINE = LCD_LINES - 1,
