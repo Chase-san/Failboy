@@ -65,6 +65,14 @@ enum {
   MBC1_ROM_BANK_BITS = 5,
   MBC1_ROM_BANK_MASK = 0x1F,
   MBC1_RAM_BANK_MASK = 0x03,
+  /* A multicart is several games of up to 256 kB behind one MBC1, wired so that the upper register picks the game: */
+  /* only 4 bits of the lower one reach the ROM. It's known by its size and by each game having its own header. */
+  MBC1_MULTICART_BANK_BITS = 4,
+  MBC1_MULTICART_SIZE = 0x100000, /* 1 MB */
+  MBC1_MULTICART_GAMES = 4,
+  MBC1_MULTICART_NEEDED = 2, /* games with a logo in place, for it to be taken for one */
+  HEADER_LOGO = 0x104,       /* the Nintendo logo every game's header carries */
+  HEADER_LOGO_SIZE = 0x30,
 };
 
 /* MBC2: 512 half-bytes of RAM built in, and its two registers told apart by address bit 8 */
@@ -102,7 +110,8 @@ static uint8_t *ram;
 
 static uint8_t cart_type = CART_ROM_ONLY; /* header byte 0x147 */
 static uint8_t cart_mode = MODE_MODELESS;
-static unsigned int rom_bank = 1; /* 2000-3fff (MBC1: its low 5 bits) */
+static unsigned int rom_bank = 1;                        /* 2000-3fff (MBC1: its low 5 bits) */
+static unsigned int mbc1_bank_bits = MBC1_ROM_BANK_BITS; /* how many of those reach the ROM: fewer in a multicart */
 static uint8_t ram_bank = 0; /* 4000-5fff: RAM bank; MBC1: or bits 5-6 of the ROM bank; MBC3: or a clock register */
 static uint8_t ram_enabled = 0;
 static uint8_t rumble = 0;
@@ -181,12 +190,41 @@ void banked_ram_write(uint16_t address, uint8_t value) {
 uint8_t mbc1_0_read(uint16_t address) {
   unsigned int bank = 0;
   if (cart_mode == MODE_MBC1_4_32) {
-    bank = ram_bank << MBC1_ROM_BANK_BITS;
+    bank = ram_bank << mbc1_bank_bits;
   }
   return rom_at(bank, address);
 }
 
-uint8_t mbc1_1_read(uint16_t address) { return rom_at(ram_bank << MBC1_ROM_BANK_BITS | rom_bank, address); }
+/* The lower register is never 0 as the MBC1 holds it, all 5 bits of it, whatever reaches the ROM. */
+uint8_t mbc1_1_read(uint16_t address) {
+  unsigned int low = rom_bank & ((1u << mbc1_bank_bits) - 1);
+  return rom_at(ram_bank << mbc1_bank_bits | low, address);
+}
+
+/* Each game of a multicart starts a quarter of the way further into the ROM, with the logo in its header. A ROM */
+/* with nothing where the logo goes has none to find. */
+static int mbc1_multicart(uint32_t rom_size) {
+  if (rom_size != MBC1_MULTICART_SIZE) {
+    return 0;
+  }
+  int blank = 1;
+  for (int i = 0; i < HEADER_LOGO_SIZE; ++i) {
+    if (rom[HEADER_LOGO + i] != 0) {
+      blank = 0;
+    }
+  }
+  if (blank) {
+    return 0;
+  }
+  int games = 0;
+  for (uint32_t game = 0; game < MBC1_MULTICART_GAMES; ++game) {
+    const uint8_t *logo = rom + game * (rom_size / MBC1_MULTICART_GAMES) + HEADER_LOGO;
+    if (memcmp(logo, rom + HEADER_LOGO, HEADER_LOGO_SIZE) == 0) {
+      ++games;
+    }
+  }
+  return games >= MBC1_MULTICART_NEEDED;
+}
 
 void mbc1_0_write(uint16_t address, uint8_t value) {
   /* 0000-3fff  */
@@ -439,6 +477,10 @@ enum gb_error cart_load(const uint8_t *data, uint32_t rom_size) {
       ext1_write_f = mbc1_1_write;
       ext2_write_f = mbc1_2_write;
       ram_size = header_ram_size();
+      mbc1_bank_bits = MBC1_ROM_BANK_BITS;
+      if (mbc1_multicart(rom_size)) {
+        mbc1_bank_bits = MBC1_MULTICART_BANK_BITS;
+      }
       break;
     case CART_MBC2:
     case CART_MBC2_BATT:

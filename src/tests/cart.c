@@ -40,6 +40,9 @@ enum {
   ROM_128K = 8 * TEST_BANK_SIZE,
   ROM_1M = 64 * TEST_BANK_SIZE,
   ROM_8M = 512 * TEST_BANK_SIZE,
+  LOGO = 0x104, /* where a game's header has the logo, by which a multicart's games are found */
+  LOGO_SIZE = 0x30,
+  MULTICART_GAME = 16 * TEST_BANK_SIZE, /* a multicart's games are this far apart */
 };
 
 static void test_mbc1_rom(void) {
@@ -149,8 +152,38 @@ static void test_mbc5(void) {
   free(rom);
 }
 
+/* A multicart: four games behind one MBC1, each with its header, the upper register picking the game and only 4 */
+/* bits of the lower one reaching the ROM. */
+static void test_mbc1_multicart(void) {
+  uint8_t *rom = test_rom(ROM_1M, CART_MBC1, 0);
+  for (int game = 0; game < 4; ++game) {
+    for (int i = 0; i < LOGO_SIZE; ++i) {
+      rom[game * MULTICART_GAME + LOGO + i] = (uint8_t)(i + 1);
+    }
+  }
+  struct gb *gb = test_boot(GB_DMG_AUTO, rom, ROM_1M, NULL);
+  CHECK(test_bank(gb, FIXED) == 0 && test_bank(gb, SWITCHED) == 1);
+  gb_write(gb, UPPER_BANK, 0x01);
+  CHECK(test_bank(gb, SWITCHED) == 0x11);
+  gb_write(gb, ROM_BANK, 0x05);
+  CHECK(test_bank(gb, SWITCHED) == 0x15);
+  /* the lower register's fifth bit doesn't reach the ROM, but still keeps it from being 0: the game's first bank */
+  gb_write(gb, ROM_BANK, 0x10);
+  CHECK(test_bank(gb, SWITCHED) == 0x10);
+  gb_write(gb, ROM_BANK, 0x00);
+  CHECK(test_bank(gb, SWITCHED) == 0x11);
+  /* in the other mode the game's first bank is at the bottom too */
+  gb_write(gb, MBC1_MODE, 0x01);
+  CHECK(test_bank(gb, FIXED) == 0x10);
+  gb_write(gb, UPPER_BANK, 0x03);
+  CHECK(test_bank(gb, FIXED) == 0x30 && test_bank(gb, SWITCHED) == 0x31);
+  gb_destroy(gb);
+  free(rom);
+}
+
 int main(void) {
   test_mbc1_rom();
+  test_mbc1_multicart();
   test_mbc1_ram();
   test_mbc2();
   test_mbc5();
