@@ -27,6 +27,11 @@
 /* - Of SameSuite's APU tests, these fail: the sweep's three, channel_4_freq_change, the envelope's speed change and */
 /*   two cases of the NRx2 glitch after a long wait (both of each square), and the three that start the APU with */
 /*   DIV's bit 4 set (a skipped first step of the frame sequencer). */
+/* - The noise channel's wait after a trigger is fitted to tests at the normal speed. At double speed, 60 of DocBoy's */
+/*   tests of triggering it again while it plays (double_speed/apu/ch4, retrigger) passed before the fit and fail */
+/*   with it, against 805 of DocBoy's that came with it. A write to NR43 stepping the LFSR, when it picks a set bit */
+/*   of the prescaler from a clear one, isn't shown by any SameSuite test (channel_4_freq_change fails either way), */
+/*   but 19 of DocBoy's pass with it that fail without. */
 /* - Nothing here was listened to: the tests read digital outputs, not what the mixer and the speaker make of them. */
 
 #include <string.h>
