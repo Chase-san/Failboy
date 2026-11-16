@@ -51,7 +51,8 @@ uint8_t oam[OAM_SIZE];
 /* turn up four times over from FEC0 to FEFF. which.gb, run on a real CGB-CPU-04 and a real CGB-CPU-05, names */
 /* them a C and a D, which bears both layouts out. A CGB E, by Pan Docs and which.gb, has no memory here and reads */
 /* back a pattern made of the address; the core has no CGB E. */
-/* The shootout's cgb-acid-hell goes by these bytes, and isn't something the choice was made for: see video.c. */
+/* The shootout's cgb-acid-hell goes by these bytes: it passes on a C and turns a D away, on the real consoles as */
+/* here. The layouts weren't chosen for it; see video.c. */
 enum {
   UNUSED_SIZE = 0x60,
   UNUSED_C_ALIAS = 0x18, /* the address lines a CGB C leaves out */

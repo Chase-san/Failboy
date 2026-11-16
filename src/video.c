@@ -67,13 +67,15 @@
 /*   sooner, palette writes landing 2 dots early. What they wanted was a halted CGB waking an M-cycle later */
 /*   (halt_cycle, cpu.c), as both wait in HALT. They pass as a CGB D, and speed_switch_timing_ly as a CGB C, whose */
 /*   palette writes land a dot later. */
-/* - The shootout's cgb-acid-hell is set aside on purpose. All that's known of it is that it doesn't pass on a CGB D */
-/*   (its author says so in its repository's first issue: a CGB D isn't meant to run it) nor on a CGB E (DocBoy's */
-/*   list has it switched off, with the comment that it fails on a real one). Nothing says which hardware does pass */
-/*   it, and it might be a CGB A alone; the test doesn't say what it checks. So no effort has gone into validating */
-/*   it or into passing it, it isn't counted for or against anything here, and what it does on either of the */
-/*   core's CGBs is whatever the rest leaves: at present it fails as a CGB D and passes as a CGB C, by what each */
-/*   reads at FEA0-FEFF (mem.c). */
+/* - The shootout's cgb-acid-hell shows its pass picture on a CPU CGB C, and on a CPU CGB D a blank screen with */
+/*   "SORRY YOU DON'T GET TO PLAY": it works out what it's on and turns a D away. Both were seen on real consoles, */
+/*   a CGB-CPU-04 and a CGB-CPU-05 (2026-11-16; the photos are in tests/phys_results), and the core's two CGBs */
+/*   show the same two screens. The battery compares with the pass picture and so counts the D's screen a */
+/*   failure; for a D it's the right one. In the core it's what FEA0-FEFF reads back that decides which screen */
+/*   comes (mem.c). None of this was tuned for: the test says nothing of what it checks, and tests like that are */
+/*   left out of the calibration; its screens fell out of memory layouts chosen on other tests. Its author says */
+/*   in its repository's first issue that a CGB D isn't meant to run it, and DocBoy's list has it switched off */
+/*   with the comment that it fails on a real CGB-E, which is what being turned away would look like. */
 /* - That a CGB C's edges go unseen at double speed (dmg_edges()) is what Gambatte's results ask for, not a known */
 /*   mechanism: it may be when a CPU at that speed reads, and not the PPU doing anything else. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
