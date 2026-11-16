@@ -27,14 +27,18 @@ enum {
   JOYPAD_BUTTONS_SHIFT = 4,
   SC_TRANSFER = 0x80, /* start / in progress */
   SC_INTERNAL_CLOCK = 0x01,
-  SB_NO_PARTNER = 0xFF, /* the line idles high, so a lone Game Boy receives all 1s */
+  SC_FAST_CLOCK = 0x02, /* CGB */
+  SC_MASTER = SC_TRANSFER | SC_INTERNAL_CLOCK,
+  SC_UNUSED_CGB = 0x7C,     /* a CGB has the fast clock bit, where unused_bits[] has a DMG's */
+  SB_NO_PARTNER_BIT = 0x01, /* the line idles high, so a lone Game Boy receives 1s */
   SERIAL_BITS = 8,
   TAC_ENABLE = 0x04,
   TAC_CLOCK = 0x03,
-  DIV_SERIAL_BIT = 0x0100,    /* the internal serial clock shifts a bit on its falling edges: 8192 Hz */
-  DIV_SEQUENCER_BIT = 0x1000, /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
-  DIV_RARE_BITS = DIV_SERIAL_BIT | DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* any of those */
-  DIV_AFTER_BOOT = 0xABCC,  /* where the DMG's boot ROM leaves the divider */
+  DIV_SERIAL_BIT = 0x0100,      /* the internal serial clock shifts a bit on its falling edges: 8192 Hz */
+  DIV_SEQUENCER_BIT = 0x1000,   /* the APU's frame sequencer steps on its falling edges: 512 Hz (0x2000 double speed) */
+  DIV_SERIAL_FAST_BIT = 0x0008, /* CGB, with SC's fast clock bit set: 262144 Hz */
+  DIV_RARE_BITS = DIV_SEQUENCER_BIT | DIV_SEQUENCER_BIT << 1, /* either of the sequencer's */
+  DIV_AFTER_BOOT = 0xABCC,                                    /* where the DMG's boot ROM leaves the divider */
   DIV_AFTER_DOUBLE = 4,     /* and where a CGB's starts again when it leaves double speed (to double, from 0) */
   TIMA_RELOAD_M_CYCLES = 1, /* M-cycles TIMA reads 00 for, past FF, before it's loaded from TMA */
   /* A CGB's boot ROM takes as long as the header makes it, so these are two games': an original Game Boy game (in */
@@ -192,6 +196,29 @@ static void timer_update(int before) {
   }
 }
 
+/* the bit of the divider whose falling edges are the serial port's own clock: a CGB's can be set 32 times faster */
+static uint16_t serial_clock(void) {
+  if (cgb_mode && (IO_REG(IO_SC) & SC_FAST_CLOCK)) {
+    return DIV_SERIAL_FAST_BIT;
+  }
+  return DIV_SERIAL_BIT;
+}
+
+/* A clock of a transfer going by the port's own clock: SB moves up a bit, and with nothing on the other end of the */
+/* cable a 1 comes in at the bottom. The eighth ends the transfer. */
+static void serial_shift(void) {
+  if (!serial_bits || (IO_REG(IO_SC) & SC_MASTER) != SC_MASTER) {
+    return;
+  }
+  IO_REG(IO_SB) = (uint8_t)(IO_REG(IO_SB) << 1 | SB_NO_PARTNER_BIT);
+  if (--serial_bits == 0) {
+    IO_REG(IO_SC) &= ~SC_TRANSFER;
+    if (!doctor) {
+      io_request(INT_SERIAL);
+    }
+  }
+}
+
 /* an M-cycle of the reload: counted down to it, and then for the one M-cycle it lasts */
 static void timer_cycle(void) {
   tima_reloaded = 0;
@@ -202,27 +229,17 @@ static void timer_cycle(void) {
   }
 }
 
-static void serial_shift(void) {
-  if (serial_bits && --serial_bits == 0) {
-    IO_REG(IO_SB) = SB_NO_PARTNER;
-    IO_REG(IO_SC) &= ~SC_TRANSFER;
-    if (!doctor) {
-      io_request(INT_SERIAL);
-    }
-  }
-}
-
 /* Moves the divider, which clocks TIMA, the serial port and the APU's frame sequencer off falling edges of its bits. */
 static void div_set(uint16_t value) {
   int before = timer_signal();
   uint16_t fallen = div_counter & ~value;
   div_counter = value;
   timer_update(before);
+  if (fallen & serial_clock()) {
+    serial_shift();
+  }
   if (!(fallen & DIV_RARE_BITS)) {
     return;
-  }
-  if (fallen & DIV_SERIAL_BIT) {
-    serial_shift();
   }
   /* the sequencer keeps to 512 Hz in double speed */
   if (fallen & (DIV_SEQUENCER_BIT << double_speed)) {
@@ -389,6 +406,11 @@ uint8_t io_read(uint16_t address) {
   switch (address) {
     case IO_P1:
       return joypad_read();
+    case IO_SC:
+      if (cgb_mode) {
+        return IO_REG(IO_SC) | SC_UNUSED_CGB;
+      }
+      return IO_REG(IO_SC) | unused_bits[IO_SC - IO_P1];
     case IO_DIV:
       return div_counter >> 8;
     case IO_IF:
