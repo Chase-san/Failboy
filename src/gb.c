@@ -38,7 +38,7 @@ uint8_t cgb_mode = 0;
 /* the revision the core is, for each console a host can ask for */
 static const int hardware[GB_REVISIONS] = {
     [GB_DMG_AUTO] = GB_HARDWARE_DMG_B,
-    [GB_CGB_AUTO] = GB_HARDWARE_CGB_E,
+    [GB_CGB_AUTO] = GB_HARDWARE_CGB_C,
 };
 
 /* **************************************** */

@@ -44,13 +44,13 @@ static void test_choice(enum gb_revision asked, int color_game, enum gb_hardware
 int main(void) {
   /* the console is the high nibble */
   CHECK((GB_HARDWARE_DMG_B & GB_CONSOLE) == GB_CONSOLE_DMG);
-  CHECK((GB_HARDWARE_CGB_E & GB_CONSOLE) == GB_CONSOLE_CGB);
+  CHECK((GB_HARDWARE_CGB_C & GB_CONSOLE) == GB_CONSOLE_CGB);
 
   test_choice(GB_AUTO, 0, GB_HARDWARE_DMG_B, 0);
-  test_choice(GB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
+  test_choice(GB_AUTO, 1, GB_HARDWARE_CGB_C, 1);
   test_choice(GB_DMG_AUTO, 0, GB_HARDWARE_DMG_B, 0);
   test_choice(GB_DMG_AUTO, 1, GB_HARDWARE_DMG_B, 0); /* a color game that also runs on the original */
-  test_choice(GB_CGB_AUTO, 1, GB_HARDWARE_CGB_E, 1);
-  test_choice(GB_CGB_AUTO, 0, GB_HARDWARE_CGB_E, 0); /* compatibility mode */
+  test_choice(GB_CGB_AUTO, 1, GB_HARDWARE_CGB_C, 1);
+  test_choice(GB_CGB_AUTO, 0, GB_HARDWARE_CGB_C, 0); /* compatibility mode */
   return test_result("revision");
 }

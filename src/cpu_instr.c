@@ -793,8 +793,8 @@ void HALT(void) {
 
 enum {
   /* T-cycles at the normal speed that a speed switch stops the CPU for, the rest of the machine running on: a */
-  /* little over 2^17 at the double speed. Fitted to daid's speed_switch_timing tests, which only go from normal to */
-  /* double; coming back is given the same wait, rounded down to an M-cycle, unchecked. Nothing cuts it short. */
+  /* little over 2^17 at the double speed. The length was fitted to daid's speed_switch_timing tests; most of */
+  /* Gambatte's speedchange results for a CGB-C, and AGE's spsw tests, say there's more to it. Nothing cuts it short. */
   SPEED_SWITCH_CYCLES = 0x10004,
 };
 

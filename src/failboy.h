@@ -60,7 +60,7 @@ enum gb_revision {
 /* they came out. */
 enum gb_hardware {
   GB_HARDWARE_DMG_B = 0x02, /* the original Game Boy, whose CPUs were 0, A, B and C */
-  GB_HARDWARE_CGB_E = 0x45, /* Game Boy Color: 0, then A to E */
+  GB_HARDWARE_CGB_C = 0x43, /* Game Boy Color: 0, then A to E */
 };
 
 enum {

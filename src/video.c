@@ -21,20 +21,29 @@
 /* */
 /* What a DMG does is taken from tests that give their own figures: Mooneye's acceptance/ppu for when LY, the modes, */
 /* the interrupts and the locks on VRAM and OAM come, and mealybug-tearoom-tests' pictures (from a DMG-CPU B "blob") */
-/* for the pixels. The shootout battery's mealybug, Mooneye ppu, acid, daid and strikethrough tests all pass. */
+/* for the pixels. The shootout battery's mealybug and Mooneye ppu tests, dmg-acid2 and strikethrough all pass. */
+/* */
+/* The CGB is a CPU CGB C, the revision with the most hardware results to go by: Gambatte's hwtests (taken to be from */
+/* a CGB-CPU-04), AGE's tests named for C, and mealybug's CGB-C pictures. Where those are silent it runs the DMG's */
+/* schedule, which AGE's names say a C shares for LY, the modes STAT shows and OAM. What it has of its own: palette */
+/* RAM locked while the pixels go (DOT_PALETTES), writes to BGP and OBP landing a dot early, the mode 0 that STAT */
+/* shows coming a dot later at double speed, and LCDC's tile data glitch. Against that evidence it stands at 2232 */
+/* of Gambatte's 3023 CGB results, 16 of AGE's 37 and 7 of mealybug's 27 pictures (2026-11-15). */
 /* */
 /* Where it's known to differ from the hardware, or is a guess: */
 /* - The OAM bug isn't emulated: on a DMG, a 16-bit INC or DEC (and some other instructions) of a register pointing */
 /*   into FE00-FEFF during the OAM scan corrupts OAM. Blargg's oam_bug 2, 4, 5 and 8 fail for it; it needs the CPU's */
 /*   instructions to tell the PPU. */
-/* - A CGB has no schedule of its own. It runs the DMG's with three numbers fitted to daid's ppu_scanline_bgp and */
-/*   speed_switch_timing tests and to cgb-acid-hell (CGB_AHEAD, CGB_PIXELS_EARLY, CGB_PALETTE_WRITE_LEAD), which */
-/*   nothing else checks. Its locks on VRAM and OAM are the DMG's but for two details, though Mooneye's lcdon tests */
-/*   say a real one differs; so is its line 153 (LY reading 0), from memory of how a CGB-E does it. */
-/* - A CGB's writes land whole at the end of their M-cycle, bar the palettes' lead and LCDC's tile data glitch, of */
-/*   which only one case is done (a tile index under 128 read as its own row). The rest of what a CGB does with */
-/*   writes during mode 3 isn't, and mealybug's CGB pictures aren't in the battery, so they haven't been tried. */
-/* - A CGB's palette RAM can be read and written during mode 3, where the real one's is locked. */
+/* - CGB, by what still fails of the evidence above: mode 3 writes to SCX, SCY, LCDC's map and tile data bits and the */
+/*   object bits (mealybug's CGB-C pictures; of the tile data glitch only one case is done, a tile index under 128 */
+/*   read as its own row); the window and LYC being switched on and off (Gambatte's window, lycEnable, m0enable and */
+/*   m2enable); the LCD coming on at odd moments (lcd_offset, display_startstate, enable_display); and what a speed */
+/*   switch does to the PPU and the timer (speedchange, AGE's spsw). Its locks on VRAM and OAM, and LY reading 0 on */
+/*   line 153, are as written for a later revision and unchecked for a C. */
+/* - Three of the shootout battery's CGB tests fail as a C: cgb-acid-hell (2 pixels), daid's ppu_scanline_bgp on a */
+/*   GBC and its speed_switch_timing_ly. They passed with numbers fitted to them, which the CGB-C evidence contradicts
+ */
+/*   (AGE has a separate picture for BGP writes on a CGB-E); what revision their references are from isn't known. */
 /* - OPRI isn't used: a CGB game's objects always go by their place in OAM, any other's by X. */
 /* - A DMG's write to STAT doesn't switch all its interrupt sources on for a moment, as the real one's does. */
 /* - A window starting a pixel late (window_check) puts the LCD a pixel out of step with the PPU on some DMGs. It */
@@ -42,12 +51,15 @@
 /*   picture from a DMG-CPU B. */
 /* - The window at WX 166 only moves its line counter (DMG); the real one's is said to start during HBlank. WY is */
 /*   compared twice a line (as the pixels start, and near the line's end), where the hardware may do it more often. */
+/* - DMG, by Gambatte's results for a DMG-CPU-08 and AGE's for a DMG-CPU C (1368 of 1651, and 10 of 14): some of the */
+/*   window's and mode 1's cases, AGE's m3-bg-scx picture and a 2-pixel difference in its m3-bg-bgp, and its */
+/*   stat-mode-sprites and oam-write. */
 /* - The PPU's reads of OAM during OAM DMA (oam_peek) are fitted to strikethrough alone: only the picture that test */
-/*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and on a CGB or at double */
-/*   speed which half of the M-cycle it is, is a guess. */
+/*   wants was found, by trying models against its tables. DMA's last byte isn't covered, and at double speed which */
+/*   half of the M-cycle it is, is a guess. Gambatte's oamdma results mostly fail, on either machine. */
 /* - VRAM DMA copies in no time, with the CPU not held up; an HBlank copy's block goes at the HBlank interrupt's */
 /*   dot, and one started while STAT shows mode 0 goes at once, which the first dot of a line and the line after the */
-/*   LCD comes on also show. */
+/*   LCD comes on also show. About half of Gambatte's dma results fail. */
 /* - STOP doesn't leave a CGB's PPU running: the screen goes black, or is left as it was if STOP came in mode 3. */
 /* - The frame after the LCD comes on is shown, where a real LCD skips it; and with the LCD off the screen is blank */
 /*   at once. */
@@ -55,8 +67,8 @@
 /*   to hand over in VBlank. */
 /* - A line with more to fetch than there's time for is cut off at its end, rather than running into the next. */
 /* - Outside this file: a halted CPU's look for interrupts halfway through an M-cycle (halt_cycle, cpu.c) is what */
-/*   Mooneye's hblank_ly_scx_timing wants of a DMG, and is done the same on a CGB and at double speed unchecked; and */
-/*   the wait after a speed switch (STOP, cpu_instr.c) is fitted for going to double speed only. */
+/*   Mooneye's hblank_ly_scx_timing wants of a DMG, and is done the same on a CGB and at double speed; and the wait */
+/*   after a speed switch (STOP, cpu_instr.c) doesn't satisfy most of Gambatte's speedchange results. */
 
 #include <string.h>
 
@@ -109,13 +121,13 @@ enum {
   DOT_LAST_COMPARE = 9, /* and then as 0 */
   NO_DOT = 0xFFFF,
   LAST_LINE = LCD_LINES - 1,
-  FIRST_LINE_DOT = 5,   /* where the line is as the M-cycle of the write that switched the LCD on ends */
-  FIRST_LINE_LATE = 2,  /* dots late that line's drawing is */
-  BOOT_DOT = 5,         /* where the boot ROM is taken to leave line 0 */
-  DMG_M_CYCLE_DOT = 1,  /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
-  CGB_AHEAD = 2,        /* a CGB's PPU is that much further on than a DMG's, against the CPU's M-cycles */
-  CGB_PIXELS_EARLY = 2, /* and its pixels start that much sooner in the line */
-  CGB_PALETTE_WRITE_LEAD = 2,
+  FIRST_LINE_DOT = 5,  /* where the line is as the M-cycle of the write that switched the LCD on ends */
+  FIRST_LINE_LATE = 2, /* dots late that line's drawing is */
+  BOOT_DOT = 5,        /* where the boot ROM is taken to leave line 0 */
+  M_CYCLE_DOT = 1,     /* the CPU's M-cycles start on this dot of a line, and every 4 from it */
+  DOT_PALETTES = 84,   /* CGB: palette RAM goes to the PPU, until 2 dots after the HBlank interrupt */
+  PALETTES_KEPT = 2,
+  CGB_PALETTE_WRITE_LEAD = 1, /* CGB: dots before the end of the M-cycle that a write to BGP, OBP0 or OBP1 lands */
   SPLIT_WRITE_LEAD = 2,  /* DMG: dots before the end of the M-cycle that a write to LCDC or a palette starts to land */
   SCROLL_WRITE_LEAD = 1, /* and that one to SCY or SCX lands */
   DOCTOR_LY = 0x90,      /* Gameboy Doctor's logs were made with LY stuck here */
@@ -304,6 +316,7 @@ struct ppu {
   uint8_t oam_write_locked;
   uint8_t vram_read_locked;
   uint8_t vram_write_locked;
+  uint8_t palettes_locked; /* CGB: palette RAM, while the pixels are going */
 
   /* a register write's second half, a dot after the first */
   uint8_t latch_dots;
@@ -322,7 +335,7 @@ struct ppu {
   int16_t x;        /* the next to come out of the FIFO: negative ones are thrown away */
   uint8_t scrolled; /* SCX's low 3 bits, as many pixels as were thrown away for them */
   uint8_t fetch_step;
-  uint8_t fetch_y; /* CGB: the row, as it was for the tile's index */
+  uint8_t fetch_y; /* the row of the map the tile's index was read from */
   uint8_t tile;
   uint8_t tile_attr;
   uint8_t tile_low;
@@ -516,8 +529,8 @@ static void stat_update(void) {
     if (p.lyc_line) {
       stat |= STAT_LYC_EQUAL;
     }
-  } else if (!cgb) {
-    /* the flag drops between lines, though the interrupt line holds; a CGB (from revision D) keeps both */
+  } else {
+    /* the flag drops between lines, though the interrupt line holds (a CGB from revision D keeps both) */
     stat &= ~STAT_LYC_EQUAL;
   }
   IO_REG(IO_STAT) = stat;
@@ -562,11 +575,7 @@ static void lock(uint8_t locked) {
 /* them for an even address, the second for an odd one. */
 static uint8_t oam_peek(int address) {
   int dma = io_dma_byte();
-  int phase = DMG_M_CYCLE_DOT;
-  if (cgb) {
-    phase += CGB_AHEAD;
-  }
-  if (dma >= 0 && ((p.dot - phase) & (M_CYCLE - 1)) >= M_CYCLE / 2) {
+  if (dma >= 0 && ((p.dot - M_CYCLE_DOT) & (M_CYCLE - 1)) >= M_CYCLE / 2) {
     return oam[(dma & ~1) | (address & 1)];
   }
   return oam[address];
@@ -639,11 +648,7 @@ static void fetch_tile(void) {
 
 /* where the tile's row is in vram[]: LCDC and, off a CGB, the scroll are read again for each half */
 static unsigned int tile_row_address(void) {
-  uint8_t y = p.fetch_y;
-  if (!cgb) {
-    y = fetch_row();
-  }
-  int row = y & TILE_ROW_MASK;
+  int row = fetch_row() & TILE_ROW_MASK;
   if (p.tile_attr & ATTR_FLIP_Y) {
     row = TILE_SIZE - 1 - row;
   }
@@ -958,13 +963,19 @@ static void pixel_pop(void) {
   p.window_fetching = 0;
 }
 
+static void hblank_mode(void) {
+  set_mode(MODE_HBLANK);
+  lock(0);
+  p.irq_mode = IRQ_HBLANK;
+}
+
 /* mode 3 is over, as long as the scroll, the window and the objects made it */
 static void drawing_end(void) {
   p.drawing = 0;
-  set_mode(MODE_HBLANK);
-  lock(0);
-  /* the interrupt comes a dot after the mode */
-  p.irq_mode = IRQ_HBLANK;
+  /* the interrupt comes a dot after the mode; at double speed the mode waits for it */
+  if (!double_speed) {
+    hblank_mode();
+  }
   p.hblank_dot = p.dot + 1;
 }
 
@@ -1058,10 +1069,15 @@ static void line_dot(void) {
     p.irq_mode = IRQ_NONE;
     lock(1);
     stat_update();
-  } else if (d == DOT_PIXELS + p.late - cgb * CGB_PIXELS_EARLY) {
+  } else if (d == DOT_PALETTES + p.late) {
+    p.palettes_locked = cgb;
+  } else if (d == DOT_PIXELS + p.late) {
     pixels_start();
     pixels_dot();
+  } else if (d == p.hblank_dot + PALETTES_KEPT) {
+    p.palettes_locked = 0;
   } else if (d == p.hblank_dot) {
+    hblank_mode();
     stat_update();
     hdma_hblank();
   } else if (d == DOT_WINDOW_Y) {
@@ -1191,9 +1207,6 @@ void video_stop(void) {
 static void lcd_on(int lead) {
   p.line = 0;
   p.dot = FIRST_LINE_DOT - lead;
-  if (cgb) {
-    p.dot += CGB_AHEAD;
-  }
   p.first_line = 1;
   p.late = FIRST_LINE_LATE;
   p.hblank_dot = NO_DOT;
@@ -1208,6 +1221,7 @@ static void lcd_off(void) {
   IO_REG(IO_LY) = 0;
   set_mode(MODE_HBLANK);
   lock(0);
+  p.palettes_locked = 0;
   p.line = 0;
   p.drawing = 0;
   p.window_line = WINDOW_LINE_NONE;
@@ -1265,9 +1279,6 @@ void video_bios_init(void) {
   IO_REG(IO_LCDC) = LCDC_ENABLE;
   IO_REG(IO_STAT) = MODE_OAM_SCAN;
   p.dot = BOOT_DOT;
-  if (cgb) {
-    p.dot += CGB_AHEAD;
-  }
   p.ly_compare = 0;
   p.oam_read_locked = 1;
   p.oam_write_locked = 1;
@@ -1291,7 +1302,10 @@ void video_bios_init(void) {
 /* BCPD/OCPD: the byte of palette RAM that BCPS/OCPS (spec) points at, which can then move on */
 static void palette_write(uint8_t *ram, uint16_t spec, uint8_t value) {
   uint8_t index = IO_REG(spec) & PALETTE_INDEX;
-  ram[index] = value;
+  /* while the PPU has the palettes the write is lost, but the index still moves on */
+  if (!p.palettes_locked) {
+    ram[index] = value;
+  }
   if (IO_REG(spec) & PALETTE_INCREMENT) {
     IO_REG(spec) = (IO_REG(spec) & ~PALETTE_INDEX) | ((index + 1) & PALETTE_INDEX);
   }
@@ -1319,8 +1333,14 @@ uint8_t video_read(uint16_t address) {
     case IO_OCPS:
       return IO_REG(address) | PALETTE_SPEC_UNUSED;
     case IO_BCPD:
+      if (p.palettes_locked) {
+        return BYTE_MASK;
+      }
       return p.bg_palettes[IO_REG(IO_BCPS) & PALETTE_INDEX];
     case IO_OCPD:
+      if (p.palettes_locked) {
+        return BYTE_MASK;
+      }
       return p.obj_palettes[IO_REG(IO_OCPS) & PALETTE_INDEX];
     case IO_OPRI:
       return IO_REG(IO_OPRI) | OPRI_UNUSED;
