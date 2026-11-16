@@ -30,7 +30,7 @@
 /*   CGB-C pictures: 2631 of Gambatte's 3023 CGB results, 22 of AGE's 37, 7 of mealybug's 27 (2026-11-16). */
 /* - A CGB E to DocBoy's test suite (whose CGB matches mealybug's CGB-D pictures wherever those differ from the */
 /*   CGB-C ones, and whose author writes of a real CGB-E), AGE's tests named for E, and mealybug's CGB-D pictures, D */
-/*   and E being taken as one: 1838 of the 2130 DocBoy tests that aren't of sound and 329 of 607 with a DMG game */
+/*   and E being taken as one: 1840 of the 2130 DocBoy tests that aren't of sound and 331 of 607 with a DMG game */
 /*   in, 22 of AGE's 37, 6 of mealybug's 20. That DocBoy's results are from that hardware is its author's word, */
 /*   in one comment; its README doesn't say. */
 /* A test of one revision is applied to the other too, unless the other's own tests say otherwise. What every CGB */
