@@ -35,14 +35,17 @@ enum {
   NR32 = 0xFF1C, /* volume */
   NR33 = 0xFF1D,
   NR34 = 0xFF1E,
-  NR41 = 0xFF20,         /* channel 4, noise: length */
-  NR42 = 0xFF21,         /* volume envelope */
-  NR43 = 0xFF22,         /* clock shift, width, divisor */
-  NR44 = 0xFF23,         /* trigger, length enable */
-  NR50 = 0xFF24,         /* master volume, left and right */
-  NR51 = 0xFF25,         /* which channels go left (high nibble) and right (low nibble) */
-  NR52 = 0xFF26,         /* power, and which channels are on */
-  WAVE_RAM = 0xFF30,     /* 32 4-bit samples, high nibble first */
+  NR41 = 0xFF20,     /* channel 4, noise: length */
+  NR42 = 0xFF21,     /* volume envelope */
+  NR43 = 0xFF22,     /* clock shift, width, divisor */
+  NR44 = 0xFF23,     /* trigger, length enable */
+  NR50 = 0xFF24,     /* master volume, left and right */
+  NR51 = 0xFF25,     /* which channels go left (high nibble) and right (low nibble) */
+  NR52 = 0xFF26,     /* power, and which channels are on */
+  WAVE_RAM = 0xFF30, /* 32 4-bit samples, high nibble first */
+  WAVE_RAM_SIZE = 0x10,
+  WAVE_BOOT_EVEN = 0x00, /* what a CGB's boot ROM leaves in its bytes, turn about */
+  WAVE_BOOT_ODD = 0xFF,
   CHANNEL_REGISTERS = 5, /* NRx0 to NRx4 for channel x, from NR10 on; NR20 and NR40 are unused */
 };
 
@@ -644,4 +647,11 @@ void audio_bios_init(void) {
   IO_REG(NR51) = 0xF3;
   channels[SQUARE1].on = 1;
   channels[SQUARE1].timer = period(SQUARE1);
+  /* a CGB's boot ROM leaves wave RAM 00 FF all the way along; a DMG's leaves whatever was there */
+  if (cgb) {
+    for (uint16_t address = WAVE_RAM; address < WAVE_RAM + WAVE_RAM_SIZE; address += 2) {
+      IO_REG(address) = WAVE_BOOT_EVEN;
+      IO_REG(address + 1) = WAVE_BOOT_ODD;
+    }
+  }
 }
