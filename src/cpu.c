@@ -99,6 +99,8 @@ static void bus_dma(void) {
     }
   }
   run_machine(M_CYCLE);
+  /* the CPU looks for interrupts next, so the PPU is caught up for it */
+  bus_sync();
   cycle_counter += cycles;
   bus_cycles += cycles;
 }
