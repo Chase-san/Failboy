@@ -524,6 +524,8 @@ uint8_t *cart_ram(uint32_t *size) {
 
 int cart_cgb(void) { return (rom[HEADER_CGB] & HEADER_CGB_GAME) != 0; }
 
+uint8_t cart_header(uint16_t address) { return rom[address]; }
+
 unsigned int cart_battery_ram_size(void) {
   if (!battery) {
     return 0;

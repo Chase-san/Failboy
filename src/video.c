@@ -442,12 +442,9 @@ int video_locked(uint16_t address, int writing) {
     }
     return p.vram_read_locked;
   }
-  /* a CGB's bytes after OAM, up to FEFF, are shut with it */
-  uint16_t oam_end = OAM_START + OAM_SIZE;
-  if (cgb) {
-    oam_end = IO_P1;
-  }
-  if (address >= OAM_START && address < oam_end) {
+  /* the bytes after OAM, up to FEFF, are shut with it: a CGB's memory there, and a DMG's nothing, which reads FF */
+  /* then where it reads 00 otherwise */
+  if (address >= OAM_START && address < IO_P1) {
     if (writing) {
       return p.oam_write_locked;
     }
@@ -1419,6 +1416,9 @@ void video_bios_init(void) {
     load_logo();
     return;
   }
+  /* the boot ROM leaves the palette indexes just past what it last wrote, counting up */
+  IO_REG(IO_BCPS) = PALETTE_INCREMENT;
+  IO_REG(IO_OCPS) = PALETTE_INCREMENT | 1;
   memset(p.bg_palettes, BYTE_MASK, sizeof(p.bg_palettes)); /* white */
   memset(p.obj_palettes, BYTE_MASK, sizeof(p.obj_palettes));
   if (cgb && !cgb_mode) {

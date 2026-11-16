@@ -495,8 +495,13 @@ int cpu_bios_init(void) {
   mem_write(0xFF43, 0x00);  // SCX
   mem_write(0xFF45, 0x00);  // LYC
   mem_write(0xFF47, 0xFC);  // BGP
-  mem_write(0xFF48, 0xFF);  // OBP0
-  mem_write(0xFF49, 0xFF);  // OBP1
+  /* a color game finds OBP0 and OBP1 at 00; what a DMG's boot ROM leaves in them isn't settled */
+  uint8_t obp = 0xFF;
+  if (cgb_mode) {
+    obp = 0x00;
+  }
+  mem_write(0xFF48, obp);   // OBP0
+  mem_write(0xFF49, obp);   // OBP1
   mem_write(0xFF4A, 0x00);  // WY
   mem_write(0xFF4B, 0x00);  // WX
   mem_write(0xFFFF, 0x00);  // IE

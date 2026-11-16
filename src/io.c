@@ -41,16 +41,32 @@ enum {
   DIV_AFTER_BOOT = 0xABCC,                                    /* where the DMG's boot ROM leaves the divider */
   DIV_AFTER_DOUBLE = 4,     /* and where a CGB's starts again when it leaves double speed (to double, from 0) */
   TIMA_RELOAD_M_CYCLES = 1, /* M-cycles TIMA reads 00 for, past FF, before it's loaded from TMA */
-  /* A CGB's boot ROM takes as long as the header makes it, so these are two games': an original Game Boy game (in */
-  /* Mooneye's boot_div tests) and a color game (BullyGB's). */
-  DIV_AFTER_COMPAT_BOOT = 0x2678,
-  DIV_AFTER_CGB_BOOT = 0x1E30,
+  /* A CGB's boot ROM takes as long as the header makes it: longer for a game it has to pick colors for, and by */
+  /* which licensee the header names. DocBoy's boot_div tests have a header for each case and give the divider to */
+  /* the M-cycle; a real CGB-CPU-04 and CGB-CPU-05, read 73 times from the first opcode, gave what they give for */
+  /* that cartridge's header, and Mooneye's boot_div what they give for its. */
+  DIV_AFTER_CGB_BOOT = 0x1EA0,    /* a color game */
+  DIV_AFTER_COMPAT_BOOT = 0x267C, /* an original Game Boy's */
+  DIV_BOOT_NEW_LICENSEE = -4,     /* the old licensee code is 33, so the new one is looked at, */
+  DIV_BOOT_NEW_LICENSEE_00 = 36,  /* and is "00" */
+  /* The old code is 01, Nintendo's: the boot ROM looks the title up for its colors, even for a color game, */
+  /* which takes as long as the title makes it. These are for a color game called REDUCTIONS and an original */
+  /* one with no title, the two the tests have that don't depend on the lookup's table. */
+  DIV_BOOT_NINTENDO_CGB = 0x1108,
+  DIV_BOOT_NINTENDO_COMPAT = 0x0258,
+  HEADER_NEW_LICENSEE = 0x144, /* two characters */
+  HEADER_OLD_LICENSEE = 0x14B,
+  OLD_LICENSEE_NINTENDO = 0x01,
+  OLD_LICENSEE_SEE_NEW = 0x33,
   IO_CGB_START = 0xFF4C, /* FF4C-FF7F: the CGB's registers, with nothing behind them on the DMG */
   OPEN_BUS = 0xFF,       /* reading nothing: the data bus floats high */
   KEY1_SWITCH = 0x01,    /* armed for STOP to switch speed */
   KEY1_DOUBLE = 0x80,
   KEY1_UNUSED = 0x7E,
   SVBK_BANK = 0x07,
+  IO_RP = 0xFF56,     /* CGB: the infrared port, which here never sees a light */
+  RP_WRITABLE = 0xC1, /* its LED, and the two bits that switch its reading on */
+  RP_UNLIT = 0x3E,    /* read: no light coming in, and the unused bits */
   SVBK_UNUSED = 0xF8,
   IO_FF72 = 0xFF72, /* CGB: FF72-FF75 just hold what's written, to no known end: FF74 for a color game, FF75 bits 4-6 */
   IO_FF73 = 0xFF73,
@@ -83,7 +99,8 @@ enum {
   DMA_IDLE = OAM_SIZE,  /* dma_next with no transfer going */
   DMA_START_CYCLES = 2, /* M-cycles from the write until OAM is taken; the first byte comes the M-cycle after */
   OAM_BUSY = 0xFF,      /* what the CPU reads from OAM meanwhile */
-  WRAM_HALF = 0x1000,   /* the address line that picks C000-CFFF or D000-DFFF */
+  DMA_AFTER_DMG_BOOT = 0xFF,
+  WRAM_HALF = 0x1000, /* the address line that picks C000-CFFF or D000-DFFF */
 };
 
 /* the buses, as far as OAM DMA is concerned */
@@ -128,11 +145,28 @@ void io_reset(void) {
 }
 
 void io_bios_init(void) {
+  /* a DMG's DMA register reads FF until it's written; a CGB's, 00 */
+  if (!cgb) {
+    IO_REG(IO_DMA) = DMA_AFTER_DMG_BOOT;
+  }
   div_counter = DIV_AFTER_BOOT;
-  if (cgb && !cgb_mode) {
-    div_counter = DIV_AFTER_COMPAT_BOOT;
-  } else if (cgb_mode) {
+  if (!cgb) {
+    return;
+  }
+  int nintendo = DIV_BOOT_NINTENDO_COMPAT;
+  div_counter = DIV_AFTER_COMPAT_BOOT;
+  if (cgb_mode) {
+    nintendo = DIV_BOOT_NINTENDO_CGB;
     div_counter = DIV_AFTER_CGB_BOOT;
+  }
+  uint8_t old_licensee = cart_header(HEADER_OLD_LICENSEE);
+  if (old_licensee == OLD_LICENSEE_NINTENDO) {
+    div_counter += nintendo;
+  } else if (old_licensee == OLD_LICENSEE_SEE_NEW) {
+    div_counter += DIV_BOOT_NEW_LICENSEE;
+    if (cart_header(HEADER_NEW_LICENSEE) == '0' && cart_header(HEADER_NEW_LICENSEE + 1) == '0') {
+      div_counter += DIV_BOOT_NEW_LICENSEE_00;
+    }
   }
 }
 
@@ -426,6 +460,11 @@ uint8_t io_read(uint16_t address) {
         return OPEN_BUS;
       }
       return KEY1_UNUSED | (double_speed * KEY1_DOUBLE) | IO_REG(IO_KEY1);
+    case IO_RP:
+      if (!cgb_mode) {
+        return OPEN_BUS;
+      }
+      return RP_UNLIT | IO_REG(IO_RP);
     case IO_SVBK:
       if (!cgb_mode) {
         return OPEN_BUS;
@@ -510,6 +549,11 @@ void io_write(uint16_t address, uint8_t value) {
       break;
     case IO_KEY1:
       IO_REG(IO_KEY1) = value & KEY1_SWITCH;
+      break;
+    case IO_RP:
+      if (cgb_mode) {
+        IO_REG(IO_RP) = value & RP_WRITABLE;
+      }
       break;
     case IO_SVBK:
       if (cgb_mode) {

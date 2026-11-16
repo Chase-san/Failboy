@@ -68,6 +68,7 @@ void cart_free(void);
 void cart_reset(int); /* the mapper as the power coming on leaves it; and if set, RAM with no battery cleared */
 uint8_t *cart_ram(uint32_t *);                       /* all of the cartridge's RAM, and its size; NULL if it has none */
 int cart_cgb(void);                                  /* the header says the game can use a Game Boy Color */
+uint8_t cart_header(uint16_t);                       /* a byte of the header, by its address (0100-014F) */
 unsigned int cart_battery_ram_size(void);            /* 0 unless the cartridge RAM has a battery */
 void cart_read_battery_ram(uint8_t *, unsigned int); /* copies the battery RAM out, to save it */
 void cart_write_battery_ram(const uint8_t *, unsigned int); /* copies a saved battery RAM back in */
