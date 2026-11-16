@@ -46,7 +46,7 @@ enum {
   WAVE_RAM_SIZE = 0x10,
   WAVE_BOOT_EVEN = 0x00, /* what a CGB's boot ROM leaves in its bytes, turn about */
   WAVE_BOOT_ODD = 0xFF,
-  WAVE_OPEN = 0xFF, /* what a read of wave RAM gets when the wave channel has it */
+  WAVE_OPEN = 0xFF,      /* what a read of wave RAM gets when the wave channel has it */
   CHANNEL_REGISTERS = 5, /* NRx0 to NRx4 for channel x, from NR10 on; NR20 and NR40 are unused */
 };
 
@@ -60,7 +60,7 @@ enum {
   ENVELOPE_DAC = 0xF8,       /* a starting volume or a rising envelope; with neither, the channel's DAC is off */
   ENVELOPE_RISE = 0x08,
   ENVELOPE_PERIOD = 0x07,
-  ENVELOPE_SHAPE = 0x0F, /* direction and period */
+  ENVELOPE_SHAPE = 0x0F,  /* direction and period */
   CONTROL_TRIGGER = 0x80, /* NRx4 */
   CONTROL_LENGTH = 0x40,
   CONTROL_FREQUENCY = 0x07, /* the frequency's high bits */
@@ -99,11 +99,17 @@ enum {
   WAVE_CORRUPT_AT = 2,    /* DMG: a trigger this many T-cycles before the channel's next read corrupts wave RAM */
   WAVE_CORRUPT_GROUP = 4,
   WAVE_ACCESS_WINDOW = 2, /* DMG: T-cycles after the wave channel reads a byte in which the CPU can get at it too */
-  TIMER_PERIOD_ZERO = 8, /* the sweep and envelope timers count a period of 0 as 8 */
+  TIMER_PERIOD_ZERO = 8,  /* the sweep and envelope timers count a period of 0 as 8 */
   LFSR_RESET = 0x7FFF,
-  LFSR_TOP = 14,       /* the new bit goes in at the top of the 15... */
-  LFSR_NARROW_TOP = 6, /* ...and in 7-bit mode, here as well */
-  NOISE_STOPPED = 14,  /* clock shifts of 14 and 15 stop the noise */
+  LFSR_TOP = 14,           /* the new bit goes in at the top of the 15... */
+  LFSR_NARROW_TOP = 6,     /* ...and in 7-bit mode, here as well */
+  NOISE_COUNTER = 0x3FFF,  /* the noise channel's prescaler is 14 bits, so clock shifts of 14 and 15 stop the noise */
+  NOISE_TICK = 4,          /* T-cycles to a tick of the noise channel's divider with a divisor of 0... */
+  NOISE_TICK_DIVISOR = 8,  /* ...and for each 1 of any other divisor */
+  NOISE_GRID = 8,          /* with a divisor, those ticks keep to a clock of this many T-cycles from the APU's start */
+  NOISE_WAIT = 8,          /* T-cycles a triggered noise channel waits on top of a tick */
+  NOISE_WAIT_OFF_GRID = 4, /* with a divisor, and triggered halfway between that clock's ticks */
+  NOISE_WAIT_OFF_GRID_1 = 12, /* the same, with a divisor of 1 */
   SEQUENCER_STEPS = 8,
   DAC_TOP = 15, /* a DAC's output runs from +15 at digital 0 down to -15 at digital 15 */
   LEFT = 0,
@@ -141,11 +147,6 @@ static const uint8_t wave_shift[4] = {
     2, /* 25% */
 };
 
-/* NR43 divisor: T-cycles between noise clocks, before the clock shift */
-static const uint8_t noise_divisor[8] = {
-    8, 16, 32, 48, 64, 80, 96, 112,
-};
-
 /* bits that read back as 1: the write-only and unused ones */
 static const uint8_t read_mask[0x20] = {
     0x80, 0x3F, 0x00, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,  // 0xFF10 to 0xFF1F
@@ -173,10 +174,11 @@ static int sweep_on;
 static int sweep_timer;     /* sweep clocks until the next sweep */
 static int sweep_frequency; /* the sweep's own copy of channel 1's frequency */
 static int sweep_negated;   /* the sweep has subtracted since channel 1 was triggered */
-static int grid;            /* T-cycles into the square channels' 1 MHz clock, which starts with the APU */
+static int grid;            /* T-cycles into the clocks the channels step on, which start with the APU */
 static uint8_t wave_sample; /* the wave channel's current 4-bit sample */
 static int wave_since;      /* T-cycles since the wave channel last read wave RAM, as far as that matters */
 static uint16_t lfsr = LFSR_RESET;
+static uint16_t noise_counter; /* the noise channel's prescaler, which runs on from when the APU came on */
 
 static int pending;             /* T-cycles the channels haven't been run for yet */
 static int handing_over;        /* the host's audio callback has the full buffer */
@@ -199,7 +201,11 @@ static int period(int ch) {
     case WAVE:
       return (FREQUENCIES - frequency(ch)) * WAVE_MULTIPLIER;
     case NOISE:
-      return noise_divisor[reg(ch, 3) & NR43_DIVISOR] << (reg(ch, 3) >> NR43_CLOCK_SHIFT);
+      /* a tick of its divider, which is half of what the divisor makes of a period: the prescaler does the rest */
+      if ((reg(ch, 3) & NR43_DIVISOR) == 0) {
+        return NOISE_TICK;
+      }
+      return (reg(ch, 3) & NR43_DIVISOR) * NOISE_TICK_DIVISOR;
     default:
       return (FREQUENCIES - frequency(ch)) * SQUARE_MULTIPLIER;
   }
@@ -375,10 +381,13 @@ static void trigger(int ch, int extra_clock) {
     c->envelope = timer_period(reg(ch, 2) & ENVELOPE_PERIOD);
     c->settled = 0;
   }
+  if (ch != WAVE) {
+    /* the squares and the noise channel step on a 1 MHz clock, and the wait starts at its next tick */
+    c->timer += (SQUARE_MULTIPLIER - grid % SQUARE_MULTIPLIER) % SQUARE_MULTIPLIER;
+  }
   if (ch == SQUARE1 || ch == SQUARE2) {
-    /* The squares step on a 1 MHz clock, and the wait starts at its next tick. The duty cycle carries on from */
-    /* where it was, and a channel that was stopped puts nothing out until its first step. */
-    c->timer += (SQUARE_MULTIPLIER - grid) % SQUARE_MULTIPLIER;
+    /* The duty cycle carries on from where it was, and a channel that was stopped puts nothing out until its */
+    /* first step. */
     if (was_on) {
       c->timer += SQUARE_RESTART_WAIT;
     } else {
@@ -394,7 +403,17 @@ static void trigger(int ch, int extra_clock) {
       c->position = 0; /* the sample playing stays until the first step */
       break;
     case NOISE:
+      /* The prescaler isn't started over, only the divider that ticks it. With a divisor, the divider's ticks keep */
+      /* to a clock of their own, and how long the first takes goes by where on that clock the trigger came. The */
+      /* waits are read off SameSuite's channel_4_frequency_alignment and equivalent_frequencies tests. */
       lfsr = LFSR_RESET;
+      if ((reg(ch, 3) & NR43_DIVISOR) == 0 || (grid + c->timer - period(ch)) % NOISE_GRID != 0) {
+        c->timer += NOISE_WAIT;
+      } else if ((reg(ch, 3) & NR43_DIVISOR) == 1) {
+        c->timer += NOISE_WAIT_OFF_GRID_1;
+      } else {
+        c->timer += NOISE_WAIT_OFF_GRID;
+      }
       break;
     default:
       break;
@@ -437,6 +456,7 @@ static void set_power(int on) {
     IO_REG(NR52) = NR52_POWER;
     sequencer = 0;
     grid = 0;
+    noise_counter = 0;
     channels[SQUARE1].position = 0;
     channels[SQUARE2].position = 0;
     channels[SQUARE1].level = 0;
@@ -464,6 +484,14 @@ static int output(int ch) {
   }
 }
 
+static void step_lfsr(void) {
+  int bit = (lfsr ^ (lfsr >> 1)) & 1;
+  lfsr = (lfsr >> 1) | (bit << LFSR_TOP);
+  if (IO_REG(NR43) & NR43_NARROW) {
+    lfsr = (lfsr & ~(1 << LFSR_NARROW_TOP)) | (bit << LFSR_NARROW_TOP);
+  }
+}
+
 /* The channel's timer ran out: on to the next step of its waveform. */
 static void advance(int ch) {
   struct channel *c = &channels[ch];
@@ -480,14 +508,11 @@ static void advance(int ch) {
       break;
     }
     case NOISE: {
-      uint8_t nr43 = reg(ch, 3);
-      if ((nr43 >> NR43_CLOCK_SHIFT) >= NOISE_STOPPED) {
-        break;
-      }
-      int bit = (lfsr ^ (lfsr >> 1)) & 1;
-      lfsr = (lfsr >> 1) | (bit << LFSR_TOP);
-      if (nr43 & NR43_NARROW) {
-        lfsr = (lfsr & ~(1 << LFSR_NARROW_TOP)) | (bit << LFSR_NARROW_TOP);
+      /* a tick of the divider counts the prescaler up, and the LFSR steps as the bit NR43 picks out of it rises */
+      uint16_t before = noise_counter;
+      noise_counter = (noise_counter + 1) & NOISE_COUNTER;
+      if (~before & noise_counter & (1 << (reg(ch, 3) >> NR43_CLOCK_SHIFT))) {
+        step_lfsr();
       }
       break;
     }
@@ -571,7 +596,7 @@ static void catch_up(void) {
     }
     pending -= run;
     sample_clock += run;
-    grid = (grid + run) % SQUARE_MULTIPLIER;
+    grid = (grid + run) % NOISE_GRID;
     if (wave_since < WAVE_ACCESS_WINDOW) {
       wave_since += run;
     }
@@ -717,6 +742,13 @@ void audio_write(uint16_t address, uint8_t value) {
         channels[ch].on = 0;
       }
       break;
+    case NR43:
+      /* picking a bit of the prescaler that's set, from one that wasn't, is a rise like any other */
+      if (channels[NOISE].on && !((noise_counter >> (old >> NR43_CLOCK_SHIFT)) & 1) &&
+          ((noise_counter >> (value >> NR43_CLOCK_SHIFT)) & 1)) {
+        step_lfsr();
+      }
+      break;
     case NR14:
     case NR24:
     case NR34:
@@ -743,6 +775,7 @@ void audio_reset(void) {
   sweep_frequency = 0;
   sweep_negated = 0;
   grid = 0;
+  noise_counter = 0;
   wave_sample = 0;
   wave_since = WAVE_ACCESS_WINDOW;
   lfsr = LFSR_RESET;
