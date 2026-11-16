@@ -24,9 +24,15 @@
 /*   and isn't here: the core's CGB C passes SameSuite's square and noise tests where the real one fails most. */
 /* - What a write to NRx2 does to a playing channel's volume is a CPU CGB E's. A DMG's differs, and the core's DMG */
 /*   leaves the volume alone. */
-/* - Of SameSuite's APU tests, these fail: the sweep's three, channel_4_freq_change, the envelope's speed change and */
-/*   two cases of the NRx2 glitch after a long wait (both of each square), and the three that start the APU with */
-/*   DIV's bit 4 set (a skipped first step of the frame sequencer). */
+/* - Of SameSuite's APU tests, these fail: channel_1_sweep_restart_2 (which its notes say a CPU CGB D fails too), */
+/*   channel_4_freq_change, the envelope's speed change and two cases of the NRx2 glitch after a long wait (both of */
+/*   each square), and the three that start the APU with DIV's bit 4 set (a skipped first step of the frame */
+/*   sequencer). */
+/* - The sweep's check for overflow comes some M-cycles after a trigger or a new frequency, and a write to NR10 or */
+/*   another trigger in between changes it. The waits are fitted to SameSuite's sweep and sweep_restart tests, with */
+/*   a shift of 7 in every case. DocBoy has some 325 tests of the same thing: with the fit 232 more of them pass */
+/*   on a CGB and 207 that passed fail (49 and 41 on a DMG), mostly in the same families (disable on a second or */
+/*   third trigger), so the kind of thing is right and what the wait goes by isn't yet. */
 /* - The noise channel's wait after a trigger is fitted to tests at the normal speed. At double speed, 60 of DocBoy's */
 /*   tests of triggering it again while it plays (double_speed/apu/ch4, retrigger) passed before the fit and fail */
 /*   with it, against 805 of DocBoy's that came with it. A write to NR43 stepping the LFSR, when it picks a set bit */
@@ -110,8 +116,13 @@ enum {
   SQUARE_MULTIPLIER = 4,
   WAVE_MULTIPLIER = 2,
   SQUARE_STEPS = 8,
-  SQUARE_START_WAIT = 8,   /* T-cycles a square channel triggered from stopped waits on top of its period */
-  SQUARE_RESTART_WAIT = 4, /* and one triggered while it plays */
+  /* The frame sequencer's clock reaches the channels before the M-cycle it falls in has been counted for them, */
+  /* so a wait that starts at one is an M-cycle longer here than on the hardware, and one that ends at one shorter. */
+  SWEEP_CHECK_WAIT = 36,    /* T-cycles from a trigger or a sweep's new frequency to its check of the one after */
+  SWEEP_CHECK_REWRITE = 28, /* and from a write to NR10 that comes while that check is on its way */
+  SWEEP_TRIGGER_HOLD = 8,   /* a sweep clock less than this many T-cycles after a trigger does nothing */
+  SQUARE_START_WAIT = 8,    /* T-cycles a square channel triggered from stopped waits on top of its period */
+  SQUARE_RESTART_WAIT = 4,  /* and one triggered while it plays */
   WAVE_SAMPLES = 32,
   WAVE_TRIGGER_DELAY = 6, /* T-cycles a triggered wave channel waits on top of its period before its first step */
   WAVE_CORRUPT_AT = 2,    /* DMG: a trigger this many T-cycles before the channel's next read corrupts wave RAM */
@@ -192,6 +203,8 @@ static int sweep_on;
 static int sweep_timer;     /* sweep clocks until the next sweep */
 static int sweep_frequency; /* the sweep's own copy of channel 1's frequency */
 static int sweep_negated;   /* the sweep has subtracted since channel 1 was triggered */
+static int sweep_check;     /* T-cycles until the sweep checks its next frequency for overflow, or 0 */
+static int sweep_hold;      /* T-cycles for which a trigger keeps the sweep's clock off */
 static int grid;            /* T-cycles into the clocks the channels step on, which start with the APU */
 static uint8_t wave_sample; /* the wave channel's current 4-bit sample */
 static int wave_since;      /* T-cycles since the wave channel last read wave RAM, as far as that matters */
@@ -276,14 +289,19 @@ static void trigger_sweep(void) {
   sweep_timer = timer_period((nr10 & NR10_PERIOD) >> NR10_PERIOD_SHIFT);
   sweep_on = (nr10 & (NR10_PERIOD | NR10_SHIFT)) != 0;
   sweep_negated = 0;
+  sweep_check = 0;
+  sweep_hold = SWEEP_TRIGGER_HOLD;
   if (nr10 & NR10_SHIFT) {
-    sweep_next(); /* only to check for overflow */
+    sweep_check = SWEEP_CHECK_WAIT; /* the next frequency is worked out, only to check for overflow */
   }
 }
 
 static void clock_sweep(void) {
   uint8_t nr10 = IO_REG(NR10);
   int sweep_period = (nr10 & NR10_PERIOD) >> NR10_PERIOD_SHIFT;
+  if (sweep_hold > 0) {
+    return;
+  }
   if (--sweep_timer > 0) {
     return;
   }
@@ -296,7 +314,7 @@ static void clock_sweep(void) {
     sweep_frequency = next;
     IO_REG(NR13) = next & 0xFF;
     IO_REG(NR14) = (IO_REG(NR14) & ~CONTROL_FREQUENCY) | (next >> 8);
-    sweep_next(); /* again with the new frequency, only to check for overflow */
+    sweep_check = SWEEP_CHECK_WAIT; /* it's worked out again with the new frequency, only to check for overflow */
   }
 }
 
@@ -606,6 +624,9 @@ static void catch_up(void) {
         run = channels[ch].timer;
       }
     }
+    if (sweep_check > 0 && sweep_check < run) {
+      run = sweep_check;
+    }
     if (levels_stale) {
       mix();
     }
@@ -628,6 +649,17 @@ static void catch_up(void) {
       if (c->timer == 0) {
         c->timer = period(ch);
         advance(ch);
+        levels_stale = 1;
+      }
+    }
+    sweep_hold -= run;
+    if (sweep_hold < 0) {
+      sweep_hold = 0;
+    }
+    if (sweep_check > 0) {
+      sweep_check -= run;
+      if (sweep_check == 0) {
+        sweep_next();
         levels_stale = 1;
       }
     }
@@ -696,6 +728,7 @@ uint8_t audio_read(uint16_t address) {
   }
   uint8_t value = IO_REG(address) | read_mask[address - NR10];
   if (address == NR52) {
+    catch_up(); /* the sweep can stop channel 1 between one write and the next */
     for (int ch = 0; ch < CHANNELS; ++ch) {
       value |= channels[ch].on << ch;
     }
@@ -739,6 +772,13 @@ void audio_write(uint16_t address, uint8_t value) {
       /* leaving negate mode once the sweep has subtracted stops channel 1 */
       if (sweep_negated && !(value & NR10_NEGATE)) {
         channels[SQUARE1].on = 0;
+      }
+      /* a check that's on its way is started over, or with no shift left to make it with, dropped */
+      if (sweep_check > 0) {
+        sweep_check = 0;
+        if (value & NR10_SHIFT) {
+          sweep_check = SWEEP_CHECK_REWRITE;
+        }
       }
       break;
     case NR11:
@@ -792,6 +832,8 @@ void audio_reset(void) {
   sweep_timer = 0;
   sweep_frequency = 0;
   sweep_negated = 0;
+  sweep_check = 0;
+  sweep_hold = 0;
   grid = 0;
   noise_counter = 0;
   wave_sample = 0;
