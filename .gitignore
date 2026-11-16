@@ -28,6 +28,15 @@ tests/*
 old_src/*
 ref/*
 
+# cmake stuff
+build/
+build-release/
+
+# modern stuff
+tests/
+rom_backup/
+.cache/
+
 # =========================
 # Operating System Files
 # =========================
